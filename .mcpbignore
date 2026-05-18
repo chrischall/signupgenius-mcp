@@ -33,10 +33,22 @@ docs/
 README.md
 CLAUDE.md
 .env.example
+*.yaml
+*.yml
 
-# Registry / plugin manifests (not used at runtime)
+# Registry / plugin / skill manifests (not used at runtime)
 server.json
+plugin.json
 .claude-plugin/
+.mcp.json
+SKILL.md
+skills/
+
+# Companion native bits (e.g. Chrome extension) are installed separately
+extension/
+
+# Repo-local maintenance scripts
+scripts/
 
 # CI / local tooling
 .github/
