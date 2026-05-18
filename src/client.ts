@@ -1,0 +1,241 @@
+import type { Account } from './config.js';
+import { sessionLogin as defaultSessionLogin } from './session-login.js';
+
+export type SessionLoginFn = typeof defaultSessionLogin;
+
+export interface RequestOpts {
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  body?: unknown;
+  query?: Record<string, string | number | boolean | undefined>;
+  /**
+   * Session mode only: route via the legacy `/SUGboxAPI.cfm?go=<action>`
+   * dispatcher instead of the v3 JSON API. Pass the `go=` action (e.g.
+   * `t.getMySignups`). Ignored in key mode.
+   */
+  legacyAction?: string;
+}
+
+/** Normalized envelope returned by every code path. Tools see this shape. */
+export interface ApiResponse<T> {
+  data: T;
+  message: string[];
+  success: boolean;
+}
+
+/** Raw upper-case envelope from `/SUGboxAPI.cfm` — converted to ApiResponse on the way out. */
+interface LegacyEnvelope<T> {
+  DATA: T;
+  MESSAGE: string[] | string;
+  SUCCESS: boolean;
+}
+
+export class SignUpGeniusClient {
+  private account: Account;
+  private accessToken: string | null = null;
+  private cookieHeader: string | null = null;
+  private refreshInFlight: Promise<void> | null = null;
+  private sessionLoginFn: SessionLoginFn;
+
+  constructor(account: Account, opts: { sessionLogin?: SessionLoginFn } = {}) {
+    this.account = account;
+    this.sessionLoginFn = opts.sessionLogin ?? defaultSessionLogin;
+  }
+
+  describe(): { name: string; mode: Account['mode']; baseUrl: string } {
+    return { name: this.account.name, mode: this.account.mode, baseUrl: this.account.baseUrl };
+  }
+
+  /** Account mode shorthand for tool registration logic. */
+  get mode(): Account['mode'] {
+    return this.account.mode;
+  }
+
+  async request<T>(path: string, opts: RequestOpts = {}): Promise<ApiResponse<T>> {
+    if (this.account.mode === 'session' && opts.legacyAction) {
+      return this.requestLegacy<T>(opts.legacyAction, opts);
+    }
+    return this.requestApi<T>(path, opts);
+  }
+
+  /** Throws if the current mode can't satisfy the call — e.g. Pro-only reports. */
+  requireMode(mode: Account['mode'], featureLabel: string): void {
+    if (this.account.mode !== mode) {
+      throw new ModeMismatchError(this.account.mode, mode, featureLabel);
+    }
+  }
+
+  private async requestApi<T>(path: string, opts: RequestOpts): Promise<ApiResponse<T>> {
+    const acct = this.account;
+    const normalizedPath = path.endsWith('/') ? path : `${path}/`;
+    const params = new URLSearchParams();
+    if (acct.mode === 'key') params.set('user_key', acct.userKey);
+    for (const [k, v] of Object.entries(opts.query ?? {})) {
+      if (v !== undefined) params.set(k, String(v));
+    }
+    const qs = params.toString();
+    const url = `${acct.baseUrl}${normalizedPath}${qs ? `?${qs}` : ''}`;
+
+    const res = await this.authedFetch(url, {
+      method: opts.method ?? 'GET',
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      headers: opts.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    });
+    return parseEnvelope<T>(res, path, normalizeKeyShape as Normalizer<T>);
+  }
+
+  private async requestLegacy<T>(action: string, opts: RequestOpts): Promise<ApiResponse<T>> {
+    // `request()` only routes here in session mode — narrow the union.
+    const acct = this.account as Extract<typeof this.account, { mode: 'session' }>;
+    const url = `${acct.legacyBaseUrl}/SUGboxAPI.cfm?go=${encodeURIComponent(action)}`;
+    const res = await this.authedFetch(url, {
+      method: 'POST',
+      body: JSON.stringify(opts.body ?? {}),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return parseEnvelope<T>(res, action, normalizeLegacyShape as Normalizer<T>);
+  }
+
+  /**
+   * Fetch with auth attached. Session mode logs in lazily on first call and
+   * re-mints credentials transparently on a 401. Key mode is stateless.
+   */
+  private async authedFetch(
+    url: string,
+    init: { method: string; body?: BodyInit; headers?: Record<string, string> },
+    isRetry = false,
+  ): Promise<Response> {
+    await this.ensureAuth();
+    const res = await fetch(url, {
+      method: init.method,
+      headers: { Accept: 'application/json', ...(init.headers ?? {}), ...this.authHeaders() },
+      body: init.body,
+    });
+
+    if (res.status === 401 && this.account.mode === 'session' && !isRetry) {
+      await this.ensureAuth({ force: true });
+      return this.authedFetch(url, init, true);
+    }
+    return res;
+  }
+
+  private authHeaders(): Record<string, string> {
+    if (this.account.mode === 'session') {
+      return { Authorization: `Bearer ${this.accessToken!}`, Cookie: this.cookieHeader! };
+    }
+    return {}; // key mode: user_key is in the query string
+  }
+
+  private async ensureAuth(opts: { force?: boolean } = {}): Promise<void> {
+    if (this.account.mode !== 'session') return;
+    if (!opts.force && this.accessToken && this.cookieHeader) return;
+    if (this.refreshInFlight) return this.refreshInFlight;
+
+    const acct = this.account;
+    this.refreshInFlight = (async () => {
+      const result = await this.sessionLoginFn({
+        loginUrl: acct.loginBaseUrl,
+        email: acct.email,
+        password: acct.password,
+      });
+      this.accessToken = result.accessToken;
+      this.cookieHeader = result.cookieHeader;
+    })();
+    try {
+      await this.refreshInFlight;
+    } finally {
+      this.refreshInFlight = null;
+    }
+  }
+}
+
+/**
+ * Maps an HTTP response into an ApiResponse<T> or throws a domain error.
+ * Used by both the v2/v3 JSON API and the legacy SUGboxAPI dispatcher —
+ * the only difference is the envelope shape, captured by the normalizer.
+ */
+type Normalizer<T> = (raw: unknown) => ApiResponse<T> | null;
+
+const normalizeKeyShape: Normalizer<unknown> = (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Partial<ApiResponse<unknown>>;
+  return { data: r.data, message: r.message ?? [], success: r.success ?? false };
+};
+
+const normalizeLegacyShape: Normalizer<unknown> = (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Partial<LegacyEnvelope<unknown>>;
+  const m = r.MESSAGE;
+  return {
+    data: r.DATA,
+    message: Array.isArray(m) ? m : m ? [m] : [],
+    success: r.SUCCESS ?? false,
+  };
+};
+
+async function parseEnvelope<T>(
+  res: Response,
+  context: string,
+  normalize: Normalizer<T>,
+): Promise<ApiResponse<T>> {
+  const text = await res.text();
+  const raw = parseJsonBody<unknown>(text);
+  const parsed = raw !== null ? normalize(raw) : null;
+  const msg = parsed?.message.join('; ');
+
+  if (res.status === 401 || res.status === 403) throw new AuthError(res.status, msg);
+  if (res.status === 404) throw new Error(`SignUpGenius 404 ${context}`);
+  if (res.status >= 500) throw new UnreachableError(res.status);
+  if (!res.ok) throw new Error(`SignUpGenius ${res.status} ${msg || res.statusText} for ${context}`);
+
+  if (!parsed) {
+    throw new Error(`SignUpGenius returned ${text === '' ? 'empty' : 'non-JSON'} body for ${context}`);
+  }
+  if (!parsed.success) {
+    throw new Error(`SignUpGenius error: ${msg && msg.length > 0 ? msg : 'unknown'}`);
+  }
+  return parsed;
+}
+
+function parseJsonBody<T>(text: string): T | null {
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
+export class AuthError extends Error {
+  constructor(public status: number, detail?: string) {
+    super(
+      `SignUpGenius rejected the request (${status}). ` +
+        'For key mode: check SIGNUPGENIUS_USER_KEY (it may be wrong, revoked, or the account no longer has Pro). ' +
+        'For session mode: the session cookie may have been invalidated server-side.' +
+        (detail ? ` (${detail})` : ''),
+    );
+    this.name = 'AuthError';
+  }
+}
+
+export class UnreachableError extends Error {
+  constructor(public status: number) {
+    super(`SignUpGenius unreachable (status ${status})`);
+    this.name = 'UnreachableError';
+  }
+}
+
+export class ModeMismatchError extends Error {
+  constructor(
+    public currentMode: Account['mode'],
+    public requiredMode: Account['mode'],
+    public feature: string,
+  ) {
+    super(
+      `${feature} requires ${requiredMode} mode but the server is running in ${currentMode} mode. ` +
+        (requiredMode === 'key'
+          ? 'Set SIGNUPGENIUS_USER_KEY (Pro subscription required for the documented v2/k API).'
+          : 'Set SIGNUPGENIUS_EMAIL + SIGNUPGENIUS_PASSWORD to enable this tool.'),
+    );
+    this.name = 'ModeMismatchError';
+  }
+}

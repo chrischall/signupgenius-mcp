@@ -1,0 +1,66 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chrischall/signupgenius-mcp",
+  "description": "SignUpGenius for Claude — sign-ups, slot reports, and groups. Works with a free account (session mode) or a Pro API key.",
+  "repository": {
+    "url": "https://github.com/chrischall/signupgenius-mcp",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "signupgenius-mcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SIGNUPGENIUS_EMAIL",
+          "description": "SignUpGenius login email (recommended). Pair with SIGNUPGENIUS_PASSWORD for session mode — works on free accounts. No SSO/2FA.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "SIGNUPGENIUS_PASSWORD",
+          "description": "SignUpGenius password (recommended) — required iff SIGNUPGENIUS_EMAIL is set.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "SIGNUPGENIUS_USER_KEY",
+          "description": "SignUpGenius Pro API key (Pro Tools > API Management). Required only for slot REPORTS — Pro subscription needed.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "SIGNUPGENIUS_NAME",
+          "description": "Friendly account name used in startup logs.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "SIGNUPGENIUS_BASE_URL",
+          "description": "Override the default JSON API base (v2/k for key mode, v3 for session mode).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "SIGNUPGENIUS_LEGACY_BASE_URL",
+          "description": "Session mode only: override the host for legacy /SUGboxAPI.cfm calls. Defaults to https://www.signupgenius.com.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "SIGNUPGENIUS_LOGIN_URL",
+          "description": "Session mode only: override the login-form host. Defaults to https://www.signupgenius.com.",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

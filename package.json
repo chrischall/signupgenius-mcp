@@ -1,0 +1,51 @@
+{
+  "name": "signupgenius-mcp",
+  "version": "1.0.0",
+  "mcpName": "io.github.chrischall/signupgenius-mcp",
+  "description": "SignUpGenius MCP server — read sign-ups, reports, and groups; add group members.",
+  "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrischall/signupgenius-mcp.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "ai",
+    "signupgenius",
+    "signups",
+    "volunteers"
+  ],
+  "type": "module",
+  "bin": {
+    "signupgenius-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    ".claude-plugin",
+    "skills",
+    ".mcp.json",
+    "server.json"
+  ],
+  "scripts": {
+    "build": "tsc && npm run bundle",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --external:dotenv --outfile=dist/bundle.js",
+    "dev": "node --env-file=.env dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.4.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "@vitest/coverage-v8": "^4.1.2",
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
