@@ -1,7 +1,7 @@
 {
   "dxt_version": "0.1",
   "name": "signupgenius-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "SignUpGenius MCP — read sign-ups, slot reports, and groups; add group members. Works with a free account (session mode) or a Pro API key.",
   "author": {
     "name": "Claude Code (AI)"
@@ -44,19 +44,61 @@
     }
   },
   "tools": [
-    { "name": "signupgenius_get_profile", "description": "Get the authenticated user's profile" },
-    { "name": "signupgenius_list_groups", "description": "List groups created by the user" },
-    { "name": "signupgenius_list_group_members", "description": "List members of a group" },
-    { "name": "signupgenius_get_group_member", "description": "Get detailed info for a group member" },
-    { "name": "signupgenius_add_group_member", "description": "Add a member to a group (write)" },
-    { "name": "signupgenius_list_created_active", "description": "List active sign-ups you've created" },
-    { "name": "signupgenius_list_created_expired", "description": "List expired sign-ups you've created" },
-    { "name": "signupgenius_list_created_all", "description": "List all sign-ups you've created" },
-    { "name": "signupgenius_list_invited", "description": "List sign-ups you're invited to" },
-    { "name": "signupgenius_list_signedupfor", "description": "List sign-ups you've signed up for" },
-    { "name": "signupgenius_legacy_get_my_signups", "description": "Session mode: list sign-ups via the SignUpGenius wizard's own endpoint" },
-    { "name": "signupgenius_report_all", "description": "Full report (filled + open slots) for a sign-up (Pro key)" },
-    { "name": "signupgenius_report_filled", "description": "Report restricted to filled slots (Pro key)" },
-    { "name": "signupgenius_report_available", "description": "Report restricted to open slots (Pro key)" }
+    {
+      "name": "signupgenius_get_profile",
+      "description": "Get the authenticated user's profile"
+    },
+    {
+      "name": "signupgenius_list_groups",
+      "description": "List groups created by the user"
+    },
+    {
+      "name": "signupgenius_list_group_members",
+      "description": "List members of a group"
+    },
+    {
+      "name": "signupgenius_get_group_member",
+      "description": "Get detailed info for a group member"
+    },
+    {
+      "name": "signupgenius_add_group_member",
+      "description": "Add a member to a group (write)"
+    },
+    {
+      "name": "signupgenius_list_created_active",
+      "description": "List active sign-ups you've created"
+    },
+    {
+      "name": "signupgenius_list_created_expired",
+      "description": "List expired sign-ups you've created"
+    },
+    {
+      "name": "signupgenius_list_created_all",
+      "description": "List all sign-ups you've created"
+    },
+    {
+      "name": "signupgenius_list_invited",
+      "description": "List sign-ups you're invited to"
+    },
+    {
+      "name": "signupgenius_list_signedupfor",
+      "description": "List sign-ups you've signed up for"
+    },
+    {
+      "name": "signupgenius_legacy_get_my_signups",
+      "description": "Session mode: list sign-ups via the SignUpGenius wizard's own endpoint"
+    },
+    {
+      "name": "signupgenius_report_all",
+      "description": "Full report (filled + open slots) for a sign-up (Pro key)"
+    },
+    {
+      "name": "signupgenius_report_filled",
+      "description": "Report restricted to filled slots (Pro key)"
+    },
+    {
+      "name": "signupgenius_report_available",
+      "description": "Report restricted to open slots (Pro key)"
+    }
   ]
 }
