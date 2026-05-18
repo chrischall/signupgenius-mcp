@@ -21,8 +21,19 @@ import { registerGroupTools } from './tools/groups.js';
 import { registerSignUpTools } from './tools/signups.js';
 import { registerReportTools } from './tools/reports.js';
 
-const account = loadAccount();
-const client = new SignUpGeniusClient(account);
+// Defer config errors to tool-call time so the server still starts cleanly
+// when env vars are missing (e.g. during the host's install-time smoke test,
+// before the user has filled in user_config). Tool invocations will surface
+// the same error message they'd see if we threw here.
+let account: ReturnType<typeof loadAccount> | null = null;
+let configError: Error | null = null;
+try {
+  account = loadAccount();
+} catch (e) {
+  configError = e as Error;
+}
+
+const client = new SignUpGeniusClient(account, { configError: configError ?? undefined });
 const server = new McpServer({ name: 'signupgenius', version: '1.0.0' });
 
 registerUserTools(server, client);
@@ -30,9 +41,14 @@ registerGroupTools(server, client);
 registerSignUpTools(server, client);
 registerReportTools(server, client);
 
-console.error(
-  `[signupgenius-mcp] SignUpGenius: ${account.name} (${account.baseUrl}) [${account.mode}]`,
-);
+if (account) {
+  console.error(
+    `[signupgenius-mcp] SignUpGenius: ${account.name} (${account.baseUrl}) [${account.mode}]`,
+  );
+} else {
+  console.error(`[signupgenius-mcp] Not configured: ${configError?.message ?? 'unknown error'}`);
+  console.error('[signupgenius-mcp] Server is running but tool calls will fail until env vars are set.');
+}
 console.error('[signupgenius-mcp] Developed and maintained by AI (Claude). Use at your own discretion.');
 
 const transport = new StdioServerTransport();

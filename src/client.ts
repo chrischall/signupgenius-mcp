@@ -30,28 +30,52 @@ interface LegacyEnvelope<T> {
 }
 
 export class SignUpGeniusClient {
-  private account: Account;
+  private account: Account | null;
+  private configError: Error | null;
   private accessToken: string | null = null;
   private cookieHeader: string | null = null;
   private refreshInFlight: Promise<void> | null = null;
   private sessionLoginFn: SessionLoginFn;
 
-  constructor(account: Account, opts: { sessionLogin?: SessionLoginFn } = {}) {
+  /**
+   * Accepts either a fully-resolved Account or a deferred error from
+   * loadAccount. When `account` is null and `configError` is set, every
+   * tool call surfaces the error — but the server still starts cleanly,
+   * which is what the install-time smoke test requires.
+   */
+  constructor(
+    account: Account | null,
+    opts: { configError?: Error; sessionLogin?: SessionLoginFn } = {},
+  ) {
     this.account = account;
+    this.configError = opts.configError ?? null;
     this.sessionLoginFn = opts.sessionLogin ?? defaultSessionLogin;
   }
 
-  describe(): { name: string; mode: Account['mode']; baseUrl: string } {
+  describe(): { name: string; mode: Account['mode']; baseUrl: string } | { error: string } {
+    if (!this.account) return { error: this.configError?.message ?? 'no account configured' };
     return { name: this.account.name, mode: this.account.mode, baseUrl: this.account.baseUrl };
   }
 
-  /** Account mode shorthand for tool registration logic. */
+  private requireAccount(): Account {
+    if (this.account) return this.account;
+    throw this.configError ?? new Error('SignUpGenius client is not configured');
+  }
+
+  /**
+   * Account mode shorthand for tool *registration* logic. Returns the
+   * configured mode if available, otherwise defaults to 'session' so the
+   * recommended set of tools is registered when the host smoke-tests an
+   * install that hasn't been configured yet. The actual config error is
+   * raised when a tool is invoked.
+   */
   get mode(): Account['mode'] {
-    return this.account.mode;
+    return this.account?.mode ?? 'session';
   }
 
   async request<T>(path: string, opts: RequestOpts = {}): Promise<ApiResponse<T>> {
-    if (this.account.mode === 'session' && opts.legacyAction) {
+    const acct = this.requireAccount();
+    if (acct.mode === 'session' && opts.legacyAction) {
       return this.requestLegacy<T>(opts.legacyAction, opts);
     }
     return this.requestApi<T>(path, opts);
@@ -59,13 +83,14 @@ export class SignUpGeniusClient {
 
   /** Throws if the current mode can't satisfy the call — e.g. Pro-only reports. */
   requireMode(mode: Account['mode'], featureLabel: string): void {
-    if (this.account.mode !== mode) {
-      throw new ModeMismatchError(this.account.mode, mode, featureLabel);
+    const acct = this.requireAccount();
+    if (acct.mode !== mode) {
+      throw new ModeMismatchError(acct.mode, mode, featureLabel);
     }
   }
 
   private async requestApi<T>(path: string, opts: RequestOpts): Promise<ApiResponse<T>> {
-    const acct = this.account;
+    const acct = this.requireAccount();
     const normalizedPath = path.endsWith('/') ? path : `${path}/`;
     const params = new URLSearchParams();
     if (acct.mode === 'key') params.set('user_key', acct.userKey);
@@ -84,8 +109,8 @@ export class SignUpGeniusClient {
   }
 
   private async requestLegacy<T>(action: string, opts: RequestOpts): Promise<ApiResponse<T>> {
-    // `request()` only routes here in session mode — narrow the union.
-    const acct = this.account as Extract<typeof this.account, { mode: 'session' }>;
+    // request() only routes here when mode === 'session', so the cast is safe.
+    const acct = this.requireAccount() as Extract<Account, { mode: 'session' }>;
     const url = `${acct.legacyBaseUrl}/SUGboxAPI.cfm?go=${encodeURIComponent(action)}`;
     const res = await this.authedFetch(url, {
       method: 'POST',
@@ -111,7 +136,7 @@ export class SignUpGeniusClient {
       body: init.body,
     });
 
-    if (res.status === 401 && this.account.mode === 'session' && !isRetry) {
+    if (res.status === 401 && this.account?.mode === 'session' && !isRetry) {
       await this.ensureAuth({ force: true });
       return this.authedFetch(url, init, true);
     }
@@ -119,14 +144,14 @@ export class SignUpGeniusClient {
   }
 
   private authHeaders(): Record<string, string> {
-    if (this.account.mode === 'session') {
+    if (this.account?.mode === 'session') {
       return { Authorization: `Bearer ${this.accessToken!}`, Cookie: this.cookieHeader! };
     }
     return {}; // key mode: user_key is in the query string
   }
 
   private async ensureAuth(opts: { force?: boolean } = {}): Promise<void> {
-    if (this.account.mode !== 'session') return;
+    if (this.account?.mode !== 'session') return;
     if (!opts.force && this.accessToken && this.cookieHeader) return;
     if (this.refreshInFlight) return this.refreshInFlight;
 

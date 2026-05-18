@@ -329,6 +329,41 @@ describe('SignUpGeniusClient — session mode', () => {
   });
 });
 
+describe('SignUpGeniusClient — degraded mode (no account configured)', () => {
+  const bootstrapError = new Error('Missing SignUpGenius auth config. Set …');
+  const newDegradedClient = () => new SignUpGeniusClient(null, { configError: bootstrapError });
+
+  it('describe() reports the config error instead of account metadata', () => {
+    const client = newDegradedClient();
+    expect(client.describe()).toEqual({ error: bootstrapError.message });
+  });
+
+  it('describe() returns a generic message when no configError was provided', () => {
+    const client = new SignUpGeniusClient(null);
+    expect(client.describe()).toEqual({ error: 'no account configured' });
+  });
+
+  it('mode defaults to "session" so registration-time logic still picks the recommended set', () => {
+    const client = newDegradedClient();
+    expect(client.mode).toBe('session');
+  });
+
+  it('request() throws the stored configError on any tool call', async () => {
+    const client = newDegradedClient();
+    await expect(client.request('/anything')).rejects.toThrow(bootstrapError.message);
+  });
+
+  it('request() throws a generic "not configured" error when no configError was provided', async () => {
+    const client = new SignUpGeniusClient(null);
+    await expect(client.request('/anything')).rejects.toThrow(/is not configured/);
+  });
+
+  it('requireMode throws the stored configError', () => {
+    const client = newDegradedClient();
+    expect(() => client.requireMode('key', 'Pro reports')).toThrowError(bootstrapError.message);
+  });
+});
+
 describe('ModeMismatchError messaging', () => {
   it('directs to user_key when key mode is required', () => {
     const err = new ModeMismatchError('session', 'key', 'Pro reports');
