@@ -1,5 +1,5 @@
 import type { Account } from './config.js';
-import { sessionLogin as defaultSessionLogin } from './session-login.js';
+import { sessionLogin as defaultSessionLogin } from './auth-session-login.js';
 
 export type SessionLoginFn = typeof defaultSessionLogin;
 
@@ -42,14 +42,28 @@ export class SignUpGeniusClient {
    * loadAccount. When `account` is null and `configError` is set, every
    * tool call surfaces the error — but the server still starts cleanly,
    * which is what the install-time smoke test requires.
+   *
+   * `preloaded` is the fetchproxy escape hatch: when set, the client uses
+   * the supplied JWT + cookie header as-if it had just successfully run
+   * `sessionLogin()`. On a 401 it falls back to the lazy login flow only if
+   * usable credentials are present on the account — otherwise the 401
+   * surfaces verbatim (re-sign-in is required in the browser).
    */
   constructor(
     account: Account | null,
-    opts: { configError?: Error; sessionLogin?: SessionLoginFn } = {},
+    opts: {
+      configError?: Error;
+      sessionLogin?: SessionLoginFn;
+      preloaded?: { accessToken: string; cookieHeader: string };
+    } = {},
   ) {
     this.account = account;
     this.configError = opts.configError ?? null;
     this.sessionLoginFn = opts.sessionLogin ?? defaultSessionLogin;
+    if (opts.preloaded) {
+      this.accessToken = opts.preloaded.accessToken;
+      this.cookieHeader = opts.preloaded.cookieHeader;
+    }
   }
 
   describe(): { name: string; mode: Account['mode']; baseUrl: string } | { error: string } {
@@ -137,8 +151,12 @@ export class SignUpGeniusClient {
     });
 
     if (res.status === 401 && this.account?.mode === 'session' && !isRetry) {
-      await this.ensureAuth({ force: true });
-      return this.authedFetch(url, init, true);
+      // fetchproxy path has empty email/password — we can't re-login here.
+      // Let the 401 propagate so the user is told to re-sign-in in the browser.
+      if (this.account.email && this.account.password) {
+        await this.ensureAuth({ force: true });
+        return this.authedFetch(url, init, true);
+      }
     }
     return res;
   }
