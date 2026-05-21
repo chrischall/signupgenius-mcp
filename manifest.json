@@ -1,7 +1,7 @@
 {
   "dxt_version": "0.1",
   "name": "signupgenius-mcp",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "SignUpGenius MCP — read sign-ups, slot reports, and groups; add group members. Three auth paths: Pro API key, email/password, or sign in via the fetchproxy browser extension.",
   "author": {
     "name": "Claude Code (AI)"
