@@ -2,11 +2,12 @@
 
 MCP server for [SignUpGenius](https://www.signupgenius.com). 13 read tools and 1 write across profile, groups, sign-ups, and reports.
 
-Two auth modes:
-- **Session mode (recommended).** Logs in with your normal email/password to call the same web API the signupgenius.com dashboard uses. **Free accounts work.** No SSO/2FA.
-- **Key mode.** Uses the documented Pro API key. Required only for the slot REPORT tools (filled/available/all-participants). Pro subscription needed.
+Three auth modes (tried in this priority order — first match wins):
+1. **Pro key mode.** Uses the documented Pro API key. Required only for the slot REPORT tools (filled/available/all-participants). Pro subscription needed.
+2. **Session mode.** Logs in with your normal email/password to call the same web API the signupgenius.com dashboard uses. **Free accounts work.** No SSO/2FA.
+3. **fetchproxy fallback (no env vars needed).** When no env vars are set, the server reads `accessToken` / `cfid` / `cftoken` cookies once at startup from your already-signed-in `signupgenius.com` tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) browser extension. After that one read, all SignUpGenius API calls go directly from Node — the extension is **not** in the request hot path. Install the extension once, sign into SignUpGenius, and the MCP just works.
 
-Both modes can be configured at the same time — set `SIGNUPGENIUS_USER_KEY` to force key mode, otherwise email/password takes effect.
+Set `SIGNUPGENIUS_DISABLE_FETCHPROXY=1` to opt out of the fallback (turns missing credentials into a hard error — useful in headless CI).
 
 ## Tools
 
@@ -45,9 +46,15 @@ SIGNUPGENIUS_NAME=PTA Org              # optional
 
 Find the user key in SignUpGenius under **Pro Tools → API Management**.
 
+### fetchproxy fallback (no env vars)
+
+Install the [fetchproxy extension](https://github.com/chrischall/fetchproxy) (Chrome Web Store / Safari `.dmg`), sign into [signupgenius.com](https://www.signupgenius.com), and remove the env block from your MCP config. The MCP reads `accessToken` / `cfid` / `cftoken` cookies once at startup and uses them like a session-mode login. No password copy-paste required.
+
+The slot REPORT tools still require Pro key mode — `SIGNUPGENIUS_USER_KEY` is the only path that hits the documented v2/k Pro API.
+
 ### Both at once
 
-Set both. Key mode wins. Useful if you have Pro for some accounts and want reports while still using your normal login elsewhere.
+Set both Pro key and email/password. Key mode wins. Useful if you have Pro for some accounts and want reports while still using your normal login elsewhere.
 
 ### Advanced overrides
 
@@ -56,6 +63,7 @@ Set both. Key mode wins. Useful if you have Pro for some accounts and want repor
 | `SIGNUPGENIUS_BASE_URL` | key: `https://api.signupgenius.com/v2/k`<br>session: `https://api.signupgenius.com/v3` | Override the JSON API base. |
 | `SIGNUPGENIUS_LEGACY_BASE_URL` | `https://www.signupgenius.com` | Override the host for `/SUGboxAPI.cfm?go=…` legacy calls. |
 | `SIGNUPGENIUS_LOGIN_URL` | `https://www.signupgenius.com` | Override the login form host. |
+| `SIGNUPGENIUS_DISABLE_FETCHPROXY` | unset | Set to `1` to skip the fetchproxy fallback (missing creds become a hard error). |
 
 ## ToS caveat
 

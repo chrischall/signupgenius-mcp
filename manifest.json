@@ -2,7 +2,7 @@
   "dxt_version": "0.1",
   "name": "signupgenius-mcp",
   "version": "1.0.1",
-  "description": "SignUpGenius MCP — read sign-ups, slot reports, and groups; add group members. Works with a free account (session mode) or a Pro API key.",
+  "description": "SignUpGenius MCP — read sign-ups, slot reports, and groups; add group members. Three auth paths: Pro API key, email/password, or sign in via the fetchproxy browser extension.",
   "author": {
     "name": "Claude Code (AI)"
   },
@@ -24,13 +24,13 @@
   "user_config": {
     "signupgenius_email": {
       "type": "string",
-      "title": "Email (recommended — session mode)",
-      "description": "SignUpGenius login email. Pair with the password below to enable session mode — works on free accounts and supports every tool except slot reports. Direct email/password accounts only (no Google/Apple/Facebook/Microsoft SSO, no 2FA).",
+      "title": "Email (session mode)",
+      "description": "SignUpGenius login email. Pair with the password below to enable session mode — works on free accounts and supports every tool except slot reports. Direct email/password accounts only (no Google/Apple/Facebook/Microsoft SSO, no 2FA). Leave blank to use the fetchproxy browser extension instead.",
       "required": false
     },
     "signupgenius_password": {
       "type": "string",
-      "title": "Password (recommended — session mode)",
+      "title": "Password (session mode)",
       "description": "SignUpGenius password. Required only when the email above is set. Stored locally in the bundle config — keep it private.",
       "required": false,
       "sensitive": true
