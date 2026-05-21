@@ -59,6 +59,12 @@
           "description": "Session mode only: override the login-form host. Defaults to https://www.signupgenius.com.",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "SIGNUPGENIUS_DISABLE_FETCHPROXY",
+          "description": "Set to 1 to skip the fetchproxy browser-extension fallback (missing creds become a hard error — useful in headless CI).",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

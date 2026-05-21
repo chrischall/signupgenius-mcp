@@ -329,6 +329,42 @@ describe('SignUpGeniusClient — session mode', () => {
   });
 });
 
+describe('SignUpGeniusClient — fetchproxy-preloaded session', () => {
+  // The fetchproxy auth path hands the client a pre-loaded JWT + cookie
+  // header and a session account with empty email/password. The client
+  // should (a) skip the lazy form-login entirely, (b) attach the supplied
+  // credentials to every request, and (c) on a 401, NOT loop trying to
+  // re-login (there are no credentials to re-login with — re-sign-in
+  // happens in the browser).
+  const fakeLogin = vi.fn();
+  const fpAccount: SessionAccount = { ...sessionAccount, email: '', password: '' };
+
+  afterEach(() => fakeLogin.mockClear());
+
+  it('uses the preloaded JWT/cookies on the very first request — no sessionLogin call', async () => {
+    const fetchSpy = mockFetch(ok({ ok: true }));
+    const client = new SignUpGeniusClient(fpAccount, {
+      sessionLogin: fakeLogin,
+      preloaded: { accessToken: 'jwt-from-browser', cookieHeader: 'accessToken=jwt-from-browser; cfid=x; cftoken=y' },
+    });
+    await client.request('/anything');
+    expect(fakeLogin).not.toHaveBeenCalled();
+    const headers = (fetchSpy.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer jwt-from-browser');
+    expect(headers.Cookie).toBe('accessToken=jwt-from-browser; cfid=x; cftoken=y');
+  });
+
+  it('does NOT retry on 401 when email/password are empty (re-sign-in happens in the browser)', async () => {
+    mockFetch({ status: 401, rawBody: '' });
+    const client = new SignUpGeniusClient(fpAccount, {
+      sessionLogin: fakeLogin,
+      preloaded: { accessToken: 'jwt-from-browser', cookieHeader: 'accessToken=jwt-from-browser' },
+    });
+    await expect(client.request('/x')).rejects.toBeInstanceOf(AuthError);
+    expect(fakeLogin).not.toHaveBeenCalled();
+  });
+});
+
 describe('SignUpGeniusClient — degraded mode (no account configured)', () => {
   const bootstrapError = new Error('Missing SignUpGenius auth config. Set …');
   const newDegradedClient = () => new SignUpGeniusClient(null, { configError: bootstrapError });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { sessionLogin, LoginFailedError } from '../src/session-login.js';
+import { sessionLogin, LoginFailedError } from '../src/auth-session-login.js';
 
 afterEach(() => vi.restoreAllMocks());
 

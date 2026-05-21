@@ -14,26 +14,36 @@ try {
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { loadAccount } from './config.js';
+import type { Account } from './config.js';
+import { resolveAuth, type ResolvedAuth } from './auth.js';
 import { SignUpGeniusClient } from './client.js';
 import { registerUserTools } from './tools/user.js';
 import { registerGroupTools } from './tools/groups.js';
 import { registerSignUpTools } from './tools/signups.js';
 import { registerReportTools } from './tools/reports.js';
 
-// Defer config errors to tool-call time so the server still starts cleanly
+// Defer auth errors to tool-call time so the server still starts cleanly
 // when env vars are missing (e.g. during the host's install-time smoke test,
-// before the user has filled in user_config). Tool invocations will surface
-// the same error message they'd see if we threw here.
-let account: ReturnType<typeof loadAccount> | null = null;
+// before the user has filled in user_config OR the user hasn't yet opened
+// signupgenius.com in their browser). Tool invocations will surface the
+// same error message they'd see if we threw here.
+let account: Account | null = null;
+let preloaded: ResolvedAuth['preloaded'];
+let source: ResolvedAuth['source'] | undefined;
 let configError: Error | null = null;
 try {
-  account = loadAccount();
+  const resolved = await resolveAuth();
+  account = resolved.account;
+  preloaded = resolved.preloaded;
+  source = resolved.source;
 } catch (e) {
   configError = e as Error;
 }
 
-const client = new SignUpGeniusClient(account, { configError: configError ?? undefined });
+const client = new SignUpGeniusClient(account, {
+  configError: configError ?? undefined,
+  preloaded,
+});
 const server = new McpServer({ name: 'signupgenius', version: '1.0.1' });
 
 registerUserTools(server, client);
@@ -42,8 +52,9 @@ registerSignUpTools(server, client);
 registerReportTools(server, client);
 
 if (account) {
+  const suffix = source === 'fetchproxy' ? ' [via fetchproxy]' : '';
   console.error(
-    `[signupgenius-mcp] SignUpGenius: ${account.name} (${account.baseUrl}) [${account.mode}]`,
+    `[signupgenius-mcp] SignUpGenius: ${account.name} (${account.baseUrl}) [${account.mode}]${suffix}`,
   );
 } else {
   console.error(`[signupgenius-mcp] Not configured: ${configError?.message ?? 'unknown error'}`);
