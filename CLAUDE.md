@@ -1,16 +1,18 @@
-# CLAUDE.md — signupgenius-mcp
+# CLAUDE.md
 
-Guidance for Claude working in this repo.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## TL;DR
 
-MCP server for SignUpGenius — 13 read tools + 1 write across profile, groups, sign-ups, and reports.
+MCP server for SignUpGenius — 14 read tools + 2 write across profile, groups, sign-ups, reports, public sign-up pages, and authenticated RSVPs.
 
 Auth resolution lives in `src/auth.ts` (Pattern A template — see "Auth resolution" below). Three paths, priority order:
 
 1. `SIGNUPGENIUS_USER_KEY` → Pro v2/k key mode (the only mode that can call slot reports).
 2. `SIGNUPGENIUS_EMAIL` + `SIGNUPGENIUS_PASSWORD` → session-login (form POST → JWT + `cfid`/`cftoken` cookies → v3 API + legacy `/SUGboxAPI.cfm`).
 3. fetchproxy fallback → `@fetchproxy/bootstrap` reads `accessToken` (a.k.a. `MTOKEN`) + `cfid` + `cftoken` cookies from the user's signed-in signupgenius.com browser tab. Bootstrap runs once at startup; from then on every API call goes out via direct Node `fetch()` with the cookies attached. Fetchproxy is **not** in the request hot path.
+
+`SIGNUPGENIUS_DISABLE_FETCHPROXY=1` skips path 3 entirely and turns a missing/partial env config into a hard error at tool-call time — useful for headless CI where the browser bridge can't apply.
 
 ## Auth resolution (Pattern A template)
 
@@ -26,11 +28,23 @@ Auth resolution lives in `src/auth.ts` (Pattern A template — see "Auth resolut
 ## Commands
 
 - `npm test` — vitest, all mocked, no network. Must stay green.
+- `npm run test:watch` — vitest watch.
+- `npx vitest run tests/tools/<name>.test.ts` — run one file.
+- `npx vitest run -t '<substring>'` — run one test by name.
 - `npm run build` — `tsc` typecheck + esbuild bundle → `dist/bundle.js`.
+- `npm run dev` — runs `dist/index.js` with `--env-file=.env` (build first).
+
+`vitest.config.ts` enforces **100% lines/branches/functions/statements** on `src/**` (excl. `src/index.ts`). Coverage gaps fail CI — write the failing test first, then the code.
+
+## Code layout
+
+- `src/auth.ts`, `src/auth-session-login.ts`, `src/config.ts`, `src/client.ts` — see "Auth resolution" above.
+- `src/index.ts` — entry point. Boots `McpServer`, calls `resolveAuth()`, wires the four tool-registration modules.
+- `src/tools/` — one file per domain: `user.ts`, `groups.ts`, `signups.ts`, `reports.ts`, `public-signup.ts`, `rsvp.ts`, plus `_shared.ts` for `textContent()` and other helpers. Tests mirror this layout under `tests/tools/`.
 
 ## Tool surface
 
-13 read + 1 write. Pro-only tools (slot reports) call `client.requireMode('key', …)` and throw `ModeMismatchError` in session/fetchproxy mode.
+14 read + 2 write. Pro-only tools (slot reports) call `client.requireMode('key', …)` and throw `ModeMismatchError` in session/fetchproxy mode. The public-signup tool needs no auth and works even when `resolveAuth()` has deferred a config error.
 
 | Domain | Tools | Mode |
 | --- | --- | --- |
@@ -39,6 +53,18 @@ Auth resolution lives in `src/auth.ts` (Pattern A template — see "Auth resolut
 | Sign-ups | `_list_created_active`, `_expired`, `_all`, `_list_invited`, `_list_signedupfor` | both |
 | Sign-ups (legacy) | `_legacy_get_my_signups` | session only |
 | Reports | `_report_all`, `_report_filled`, `_report_available` | **key only** |
+| Public page | `_get_public_signup` | no auth |
+| RSVP | `_rsvp` (write) | session only |
+
+### RSVP flow notes
+
+`signupgenius_rsvp` only handles **RSVP-style** sheets (Yes/No/Maybe + optional guest counts). Under the hood it walks the same three-step browser flow the Angular wizard does:
+
+1. `POST /index.cfm?go=s.PreProcessSignup&URLID=<urlid>` (form-encoded) — sets server-side session state. Implemented as `SignUpGeniusClient.preProcessSignUp(urlid)`.
+2. `POST /SUGboxAPI.cfm?go=s.getSignupInfo` with `{ urlid }` — returns the full sign-up envelope. Used to gate on `useRSVP === 1` and pull `rsvpdetails.slotid`.
+3. `POST /SUGboxAPI.cfm?go=s.processSignUpFormHandler` with the payload built by `buildRsvpPayload`.
+
+**Slot-based sign-ups are explicitly rejected** by `signupgenius_rsvp` — they need `type:"standard"` + an `items` array + a separate `s.getSignUpFormItems` call. That's a different tool, not implemented yet.
 
 ## Conventions
 

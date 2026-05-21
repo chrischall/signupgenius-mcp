@@ -21,6 +21,8 @@ import { registerUserTools } from './tools/user.js';
 import { registerGroupTools } from './tools/groups.js';
 import { registerSignUpTools } from './tools/signups.js';
 import { registerReportTools } from './tools/reports.js';
+import { registerPublicSignUpTools } from './tools/public-signup.js';
+import { registerRsvpTool } from './tools/rsvp.js';
 
 // Defer auth errors to tool-call time so the server still starts cleanly
 // when env vars are missing (e.g. during the host's install-time smoke test,
@@ -50,6 +52,8 @@ registerUserTools(server, client);
 registerGroupTools(server, client);
 registerSignUpTools(server, client);
 registerReportTools(server, client);
+registerPublicSignUpTools(server);
+registerRsvpTool(server, client);
 
 if (account) {
   const suffix = source === 'fetchproxy' ? ' [via fetchproxy]' : '';

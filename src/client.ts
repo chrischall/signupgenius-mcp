@@ -103,6 +103,45 @@ export class SignUpGeniusClient {
     }
   }
 
+  /**
+   * Walk the browser-side "click RSVP NOW" preprocess step. Without this
+   * call, follow-up SUGboxAPI actions (`s.getSignupInfo`,
+   * `s.processSignUpFormHandler`, …) return "Oops! Looks like there's none to
+   * be processed" — the server keeps the active-signup pointer in ColdFusion
+   * session state and PreProcessSignup is what sets it.
+   *
+   * Session mode only. The endpoint is a form-encoded POST to
+   * `/index.cfm?go=s.PreProcessSignup&URLID=<urlid>` that 301s to
+   * `s.ProcessSignup`; we don't care about the redirect target itself, only
+   * that the server accepted the URL.
+   */
+  async preProcessSignUp(urlid: string): Promise<void> {
+    this.requireMode('session', 'preProcessSignUp');
+    const acct = this.requireAccount() as Extract<Account, { mode: 'session' }>;
+    await this.ensureAuth();
+    const url = `${acct.legacyBaseUrl}/index.cfm?go=s.PreProcessSignup&URLID=${encodeURIComponent(urlid)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'text/html',
+      },
+      body: 'ScreenWidth=2000&ScreenHeight=1200',
+    });
+    // The browser sees a 301 → /index.cfm?go=s.ProcessSignup. A 200 means the
+    // server rendered an error page instead; a 4xx/5xx means the JWT/cookies
+    // are stale. Treat anything other than the documented redirect codes as
+    // an explicit failure rather than silently moving on.
+    if (res.status !== 301 && res.status !== 302) {
+      throw new Error(
+        `PreProcessSignup for ${urlid} returned status ${res.status} ` +
+          `(expected 301/302). The sign-up may be locked, expired, or invitee-only.`,
+      );
+    }
+  }
+
   private async requestApi<T>(path: string, opts: RequestOpts): Promise<ApiResponse<T>> {
     const acct = this.requireAccount();
     const normalizedPath = path.endsWith('/') ? path : `${path}/`;
