@@ -2,7 +2,7 @@
   "name": "signupgenius-mcp",
   "version": "1.0.1",
   "mcpName": "io.github.chrischall/signupgenius-mcp",
-  "description": "SignUpGenius MCP server — read sign-ups, reports, and groups; add group members.",
+  "description": "SignUpGenius MCP server \u2014 read sign-ups, reports, and groups; add group members.",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {
     "type": "git",
@@ -31,7 +31,7 @@
   ],
   "scripts": {
     "build": "tsc && npm run bundle",
-    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --external:dotenv --outfile=dist/bundle.js",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --external:dotenv --banner:js='import { createRequire as __createRequire } from \"module\"; const require = __createRequire(import.meta.url);' --outfile=dist/bundle.js",
     "dev": "node --env-file=.env dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest"
