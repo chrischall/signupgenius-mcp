@@ -44,7 +44,7 @@ const client = new SignUpGeniusClient(account, {
   configError: configError ?? undefined,
   preloaded,
 });
-const server = new McpServer({ name: 'signupgenius', version: '1.0.1' });
+const server = new McpServer({ name: 'signupgenius', version: '1.0.2' });
 
 registerUserTools(server, client);
 registerGroupTools(server, client);
