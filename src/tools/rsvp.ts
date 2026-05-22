@@ -32,6 +32,8 @@ import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
 /** Subset of the `s.getSignupInfo` envelope this tool relies on. */
 export interface SignupInfo {
   id: number;
+  /** Creator's member id — the wizard sends this as `owner` in the payload. */
+  owner: number;
   urlid: string;
   title: string;
   /** `1` for RSVP-style sign-ups, `0` for slot-style. */
@@ -43,6 +45,13 @@ export interface SignupInfo {
     endtime?: string;
     location?: string;
     usetime?: number;
+    /**
+     * Per-line-item slots (e.g. "lasagna", "salad"). Empty/absent on the
+     * headcount-only RSVP variant; populated when the sign-up owner has
+     * configured "guests must pick an item to bring". This tool only handles
+     * the headcount variant — see the item-based branch in `buildRsvpPayload`.
+     */
+    rsvpitems?: unknown[];
   };
 }
 
@@ -57,19 +66,45 @@ export interface RsvpInput {
   email: string;
 }
 
+/**
+ * Wire-format payload sent to `s.processSignUpFormHandler`. Mirrors
+ * `d.ProcessSignUp` in `/dist/js/signups/signup.min.js` — every field the
+ * wizard's `d.objForm` carries is present, plus the handful added at
+ * submit-time (`type`, `source`, `slotid`, `isLoggedin`, `payLater`,
+ * `customFields`).
+ *
+ * The CFML validator on the receiving end reads `RSVPITEMS` unconditionally;
+ * omitting it triggers `key [RSVPITEMS] doesn't exist` from
+ * `structKeyExists`. Always emit it as `[]` on the headcount-only variant.
+ */
 export interface RsvpPayload {
-  type: 'rsvp';
-  source: 'main';
+  // objForm fields
+  listid: number;
+  owner: number;
   urlid: string;
-  signupid: number;
-  slotid: number;
-  rsvpresponse: 'y' | 'n' | 'm';
-  rsvpadult: number;
-  rsvpchildren: number;
+  title: string;
+  siid: string;
+  rsvpid: number;
+  imid: number;
+  usealternatename: boolean;
+  /** `changemembermame` is misspelled in the wizard JS — preserve the typo. */
+  changemembermame: boolean;
+  displayfirstname: string;
+  displaylastname: string;
   firstname: string;
   lastname: string;
   email: string;
-  comment: string;
+  optInStatus: boolean;
+  savecontactinfo: boolean;
+  rsvpresponse: 'y' | 'n' | 'm';
+  rsvpadult: number;
+  rsvpchildren: number;
+  rsvpitems: never[];
+  rsvpcomments: string;
+  // Fields added by d.ProcessSignUp on top of objForm
+  type: 'rsvp';
+  source: 'main';
+  slotid: number;
   isLoggedin: true;
   payLater: false;
   customFields: never[];
@@ -125,22 +160,46 @@ export function buildRsvpPayload(
   const adults = isNo ? 0 : input.adults ?? 1;
   const children = isNo ? 0 : input.children ?? 0;
   return {
-    type: 'rsvp',
-    source: 'main',
+    listid: info.id,
+    owner: info.owner,
     urlid: parts.urlid,
-    signupid: parts.signupid,
-    slotid: info.rsvpdetails.slotid,
-    rsvpresponse: letter,
-    rsvpadult: adults,
-    rsvpchildren: children,
+    title: info.title,
+    siid: '',
+    rsvpid: 0,
+    imid: 0,
+    usealternatename: false,
+    changemembermame: false,
+    displayfirstname: input.firstname,
+    displaylastname: input.lastname,
     firstname: input.firstname,
     lastname: input.lastname,
     email: input.email,
-    comment: input.comment ?? '',
+    optInStatus: false,
+    savecontactinfo: false,
+    rsvpresponse: letter,
+    rsvpadult: adults,
+    rsvpchildren: children,
+    rsvpitems: [],
+    rsvpcomments: input.comment ?? '',
+    type: 'rsvp',
+    source: 'main',
+    slotid: info.rsvpdetails.slotid,
     isLoggedin: true,
     payLater: false,
     customFields: [],
   };
+}
+
+/**
+ * True when `getSignupInfo` reports per-item slots on an RSVP-style sheet
+ * (e.g. "Yes, I'll bring lasagna"). Headcount-only RSVPs leave `rsvpitems`
+ * empty or unset. We only handle the headcount variant — the item variant
+ * needs a separate input surface (per-slot quantities + comments) that this
+ * tool doesn't expose.
+ */
+export function isItemBasedRsvp(info: SignupInfo): boolean {
+  const items = info.rsvpdetails.rsvpitems;
+  return Array.isArray(items) && items.length > 0;
 }
 
 export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient): void {
@@ -179,6 +238,17 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
             'This tool only handles Yes/No/Maybe responses. Slot-based sign-ups need a separate tool.',
         );
       }
+      if (isItemBasedRsvp(info)) {
+        // Length is safe to read because isItemBasedRsvp confirmed the array.
+        const itemCount = info.rsvpdetails.rsvpitems!.length;
+        throw new Error(
+          `Sign-up ${parts.urlid} is an item-based RSVP — guests must pick from ` +
+            `${itemCount} item slot(s) ` +
+            "(e.g. \"Yes, I'll bring lasagna\"). This tool only handles the " +
+            'headcount-only RSVP variant. Use the SignUpGenius web UI for ' +
+            'item-based responses until a dedicated tool ships.',
+        );
+      }
 
       const payload = buildRsvpPayload(parts, info, args);
       const result = await client.request('', {
@@ -197,7 +267,7 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         response: args.response,
         adults: payload.rsvpadult,
         children: payload.rsvpchildren,
-        comment: payload.comment,
+        comment: payload.rsvpcomments,
         server: result.data,
       });
     },
