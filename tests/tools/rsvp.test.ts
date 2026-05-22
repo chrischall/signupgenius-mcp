@@ -16,6 +16,7 @@ const URL_FULL = `https://www.signupgenius.com/go/${SLUG}`;
 
 const RSVP_INFO: SignupInfo = {
   id: 63774883,
+  owner: 16823335,
   urlid: SLUG,
   title: 'Myers Park Bands Spring Banquet',
   useRSVP: 1,
@@ -26,15 +27,31 @@ const RSVP_INFO: SignupInfo = {
     endtime: 'May, 21 2026 18:30:00',
     location: 'Myers Park Cafeteria',
     usetime: 1,
+    rsvpitems: [],
   },
 } as SignupInfo;
 
 const SLOT_INFO: SignupInfo = { ...RSVP_INFO, useRSVP: 0 };
 
+const ITEM_RSVP_INFO: SignupInfo = {
+  ...RSVP_INFO,
+  rsvpdetails: {
+    ...RSVP_INFO.rsvpdetails,
+    rsvpitems: [
+      { slotitemid: 1, item: 'Lasagna', qty: 4, availableqty: 4 },
+    ] as never,
+  },
+} as SignupInfo;
+
 describe('buildRsvpPayload', () => {
   const parts = parseSignUpUrl(URL_FULL);
 
-  it('builds a complete YES payload with sensible defaults', () => {
+  it('matches the wizard wire format exactly for a YES headcount-only RSVP', () => {
+    // Regression for signupid 63774883 ("Myers Park Bands Spring Banquet").
+    // Server rejected the previous shape with "key [RSVPITEMS] doesn't exist"
+    // because the CFML validator unconditionally reads RSVPITEMS from the
+    // payload struct. The fix tracks `/dist/js/signups/signup.min.js`'s
+    // `d.ProcessSignUp` so every key the wizard sends is present.
     const p = buildRsvpPayload(parts, RSVP_INFO, {
       url: URL_FULL,
       response: 'yes',
@@ -42,19 +59,31 @@ describe('buildRsvpPayload', () => {
       lastname: 'Hall',
       email: 'chris@example.com',
     });
-    expect(p).toMatchObject({
-      type: 'rsvp',
-      source: 'main',
+    expect(p).toEqual({
+      listid: 63774883,
+      owner: 16823335,
       urlid: SLUG,
-      signupid: 63774883,
-      slotid: 815208881,
-      rsvpresponse: 'y',
-      rsvpadult: 1,
-      rsvpchildren: 0,
+      title: 'Myers Park Bands Spring Banquet',
+      siid: '',
+      rsvpid: 0,
+      imid: 0,
+      usealternatename: false,
+      changemembermame: false,
+      displayfirstname: 'Chris',
+      displaylastname: 'Hall',
       firstname: 'Chris',
       lastname: 'Hall',
       email: 'chris@example.com',
-      comment: '',
+      optInStatus: false,
+      savecontactinfo: false,
+      rsvpresponse: 'y',
+      rsvpadult: 1,
+      rsvpchildren: 0,
+      rsvpitems: [],
+      rsvpcomments: '',
+      type: 'rsvp',
+      source: 'main',
+      slotid: 815208881,
       isLoggedin: true,
       payLater: false,
       customFields: [],
@@ -90,12 +119,20 @@ describe('buildRsvpPayload', () => {
     expect(maybe).toMatchObject({ rsvpresponse: 'm', rsvpadult: 2, rsvpchildren: 4 });
   });
 
-  it('includes a comment when provided', () => {
+  it('includes a comment when provided, under the wizard\'s rsvpcomments key', () => {
     const p = buildRsvpPayload(parts, RSVP_INFO, {
       url: URL_FULL, response: 'yes', comment: 'Excited!',
       firstname: 'A', lastname: 'B', email: 'x@y.co',
     });
-    expect(p.comment).toBe('Excited!');
+    expect(p.rsvpcomments).toBe('Excited!');
+  });
+
+  it('always sends rsvpitems as an empty array on the headcount-only variant', () => {
+    const p = buildRsvpPayload(parts, RSVP_INFO, {
+      url: URL_FULL, response: 'yes',
+      firstname: 'A', lastname: 'B', email: 'x@y.co',
+    });
+    expect(p.rsvpitems).toEqual([]);
   });
 });
 
@@ -160,13 +197,37 @@ describe('signupgenius_rsvp tool', () => {
       body: expect.objectContaining({
         type: 'rsvp',
         urlid: SLUG,
-        signupid: 63774883,
+        listid: 63774883,
         slotid: 815208881,
         rsvpresponse: 'y',
+        rsvpitems: [],
       }),
     });
     const payload = JSON.parse(result.content[0].text);
     expect(payload.success).toBe(true);
+  });
+
+  it('rejects item-based RSVPs with a clear, scope-limiting error', async () => {
+    // useRSVP===1 but rsvpdetails.rsvpitems has entries → the sign-up needs
+    // per-item selections (lasagna vs salad, etc). This tool only takes a
+    // headcount; building a useful payload for the item variant would need a
+    // separate input surface, so we throw rather than silently submit a
+    // truncated RSVP.
+    const client = new SignUpGeniusClient(sessionAccount);
+    vi.spyOn(client, 'request').mockImplementation(async (_p, opts) => {
+      if (opts?.legacyAction === 's.getSignupInfo') {
+        return { data: ITEM_RSVP_INFO, message: [], success: true } as never;
+      }
+      throw new Error('processSignUpFormHandler should not be called');
+    });
+    vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
+    const handlers = attachTool(client);
+    await expect(
+      handlers.get('signupgenius_rsvp')!({
+        url: URL_FULL, response: 'yes',
+        firstname: 'A', lastname: 'B', email: 'x@y.co',
+      }),
+    ).rejects.toThrow(/item-based/i);
   });
 
   it('throws a clear error for non-RSVP (slot-based) sign-ups', async () => {
