@@ -73,6 +73,16 @@ Auth resolution lives in `src/auth.ts` (Pattern A template — see "Auth resolut
 - Write a failing test before implementation (TDD). Tool tests live in `tests/tools/<name>.test.ts` and mock `SignUpGeniusClient.request`.
 - Don't add WS-server or protocol-frame logic here. That lives upstream in `@fetchproxy/server` (consumed via `@fetchproxy/bootstrap`). Bugs in extension handshaking, frame validation, or service-worker keepalive belong in the fetchproxy repo.
 
+## Publishing constraints
+
+The MCP Registry's [server.schema.json](https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json) caps `server.json`'s `description` at **100 characters**. Values over that fail `mcp-publisher publish` with HTTP 422 (`validation failed: expected length <= 100, location: body.description`). The other description fields (`manifest.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`) have no published length constraint and can stay longer.
+
+Sanity-check before committing a description change:
+
+```bash
+jq -r '.description | length' server.json
+```
+
 ## Versioning
 
 Version appears in several places — all must match: `package.json`, `package-lock.json`, `src/index.ts` (`McpServer` constructor), `manifest.json`, `server.json`. Don't bump manually unless explicitly asked — versioning is automated.
