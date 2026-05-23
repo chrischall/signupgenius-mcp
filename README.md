@@ -88,3 +88,25 @@ Tests: vitest, 100% line/branch/function coverage. End-to-end tests against the 
 - For testing the Pro v2/k surface without an account, SignUpGenius publishes a frozen demo key: `V0FzMkxZcmVOZlVnclZMVEl6dGhWQT09`.
 
 Developed and maintained by AI (Claude). Use at your own discretion.
+
+## Acknowledgement of Terms
+
+By using this MCP server, you acknowledge and agree to the following:
+
+**1. This server accesses your own SignUpGenius account.** Auth happens via your own credentials. It does not — and cannot — access anyone else's account or signups.
+
+**2. [SignUpGenius's Terms of Service](https://www.signupgenius.com/terms-of-service) govern your use of this server**, just as they govern your direct use of signupgenius.com. The clauses most relevant here:
+
+> Users may not bypass any robot exclusion headers or other measures we take to restrict access to the Services or use any software, technology, or device to scrape, spider, or crawl the Services.
+
+And: *"You are responsible for maintaining the confidentiality of your account user name and password… You agree to accept responsibility for any and all activities or actions that occur in connection with your User Credentials."*
+
+You are agreeing to those terms — read by the maintainer 2026-05-23 — every time you invoke a tool in this server. Notably, **SignUpGenius does offer an official API** for paid plans; where possible, prefer the official API over the endpoints this MCP exercises.
+
+**3. Personal, organizer/participant use only.** This project is not affiliated with, endorsed by, sponsored by, or in partnership with SignUpGenius, Inc. It is a personal automation tool for an authenticated user to manage their own signups and groups. Do not use it to scrape other organizers' signups, spam participants, or bulk-add fake group members.
+
+**4. Stability is not guaranteed.** This server may call internal endpoints that SignUpGenius can change without notice. If a tool here breaks, the canonical fix is to use the official API where available.
+
+**5. You accept full responsibility** for any consequences of using this server in connection with your SignUpGenius account — rate limiting, account warnings, suspension, or any enforcement action. Per the ToS, everything done under your credentials is attributed to you. If SignUpGenius objects to your use, stop using this server.
+
+This section is the maintainer's good-faith summary of the terms — it is not legal advice and does not modify or supersede SignUpGenius's actual ToS.
