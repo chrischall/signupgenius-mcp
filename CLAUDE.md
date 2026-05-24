@@ -87,8 +87,41 @@ jq -r '.description | length' server.json
 
 Version appears in several places — all must match: `package.json`, `package-lock.json`, `src/index.ts` (`McpServer` constructor), `manifest.json`, `server.json`. Don't bump manually unless explicitly asked — versioning is automated.
 
+## Pull requests & release notes
+
+**Default workflow: branch + PR, even for solo work.** Direct pushes to `main` skip review *and* the auto-generated release notes block (configured in `.github/release.yml`).
+
+For every PR, apply exactly one label:
+
+| Label                  | Section in release notes |
+|------------------------|--------------------------|
+| `enhancement`          | Features                 |
+| `bug`                  | Bug Fixes                |
+| `security`             | Security                 |
+| `refactor`             | Refactor                 |
+| `documentation`        | Documentation            |
+| `test`                 | Tests                    |
+| `dependencies`         | Dependencies             |
+| `ci` / `github_actions`| CI & Build               |
+| *(none / unmatched)*   | Other Changes            |
+| `ignore-for-release`   | Hidden from notes        |
+
+The **PR title** becomes the bullet — write it like a user-facing changelog entry, not internal shorthand. Conventional-commit prefixes (`feat:`, `fix:`, `chore:`) are still fine in commit messages, but the PR title should read clean.
+
+### How PRs merge
+
+**Do not manually merge PRs — including the release-please release PR.** Open with `gh pr create --label <label>` (or `--label ignore-for-release` for chores not worth a release-notes line). That is the whole job. Do **not** run `gh pr merge --auto --squash` yourself.
+
+The automation handles the rest:
+
+1. `pr-auto-review.yml` runs a Claude review on every PR. On a `pass` verdict it adds the `ready-to-merge` label.
+2. `release-please.yml` adds the `ready-to-merge` label to its own release PR automatically.
+3. `auto-merge.yml`, on the `ready-to-merge` label (or on a dependabot PR), arms `gh pr merge --auto --squash` for you. The moment CI is green the PR squash-merges itself.
+
+If Claude's review verdict was `warn` or `fail` but you've decided to ship anyway, add the label yourself: `gh pr edit <num> --add-label ready-to-merge`. The repo allows squash-merge only — `--merge` and `--rebase` are blocked at the branch-protection ruleset level.
+
 ## What to *not* do
 
-- Don't reintroduce a `transport.ts` / `transport-fetchproxy.ts` layer between the client and Node fetch. The fetchproxy bootstrap is a one-shot cookie read at startup; per-request routing through the browser is not the model here (SignUpGenius doesn't have Akamai in front of it, so plain Node fetch with the right cookies works).
+- Don't reintroduce a `transport.ts` / `transport-fetchproxy.ts` layer between the client and Node fetch. The fetchproxy bootstrap is a one-shot cookie read at startup; per-request routing through the browser isn't needed here (SignUpGenius doesn't run an edge that revalidates each request, so plain Node fetch with the cookies from the bootstrap call works once you're authenticated).
 - Don't paste real cookies into tests. Mock `@fetchproxy/bootstrap` at the module boundary.
 - Don't break the "no env vars set" smoke-test path. The server must still start cleanly so MCP hosts can complete their install-time tool listing — `resolveAuth()` errors are deferred to tool-call time via `configError`.
