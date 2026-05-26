@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.6](https://github.com/chrischall/signupgenius-mcp/compare/v1.0.5...v1.0.6) (2026-05-26)
+
+
+### Documentation
+
+* **claude:** warn against early PRs and call out first-party dep bumps ([#27](https://github.com/chrischall/signupgenius-mcp/issues/27)) ([756d388](https://github.com/chrischall/signupgenius-mcp/commit/756d388bad6a2d5025c9c57c3e67ff2803e9a81b))
+
 ## [1.0.5](https://github.com/chrischall/signupgenius-mcp/compare/v1.0.4...v1.0.5) (2026-05-25)
 
 
