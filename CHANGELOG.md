@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5](https://github.com/chrischall/signupgenius-mcp/compare/v1.0.4...v1.0.5) (2026-05-25)
+
+
+### Bug Fixes
+
+* **ci:** prevent labeled event from cancelling auto-review ([#24](https://github.com/chrischall/signupgenius-mcp/issues/24)) ([4fc290c](https://github.com/chrischall/signupgenius-mcp/commit/4fc290c1f552df17381c1ed482270e9b3acc4158))
+
 ## [1.0.4](https://github.com/chrischall/signupgenius-mcp/compare/v1.0.3...v1.0.4) (2026-05-24)
 
 
