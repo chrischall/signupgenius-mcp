@@ -5,7 +5,7 @@ description: Read sign-up sheets, slot reports, and groups on SignUpGenius — a
 
 # signupgenius-mcp
 
-MCP server for [SignUpGenius](https://www.signupgenius.com) — 15 read tools + 1 write across profile, groups, sign-ups, and reports.
+MCP server for [SignUpGenius](https://www.signupgenius.com) — 14 read tools + 2 write across profile, groups, sign-ups, and reports.
 
 - **npm:** [npmjs.com/package/signupgenius-mcp](https://www.npmjs.com/package/signupgenius-mcp)
 - **Source:** [github.com/chrischall/signupgenius-mcp](https://github.com/chrischall/signupgenius-mcp)
