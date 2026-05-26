@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.7](https://github.com/chrischall/signupgenius-mcp/compare/v1.0.6...v1.0.7) (2026-05-26)
+
+
+### Bug Fixes
+
+* **ci:** substitute repo name in publish workflow + add SKILL.md ([#29](https://github.com/chrischall/signupgenius-mcp/issues/29)) ([be6f852](https://github.com/chrischall/signupgenius-mcp/commit/be6f8520e869d4183c0c3dbb7475a409e5b71e97))
+
 ## [1.0.6](https://github.com/chrischall/signupgenius-mcp/compare/v1.0.5...v1.0.6) (2026-05-26)
 
 

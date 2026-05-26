@@ -1,7 +1,7 @@
 {
   "name": "signupgenius-mcp",
   "displayName": "SignUpGenius",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "SignUpGenius MCP server for Claude — read sign-ups, slot reports, and groups; add group members. Three auth paths: Pro API key, email/password, or sign in via the fetchproxy browser extension.",
   "author": {
     "name": "Chris Hall",
