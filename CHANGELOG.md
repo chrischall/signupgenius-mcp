@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.0.7...v1.1.0) (2026-05-28)
+
+
+### Features
+
+* **deps:** adopt @fetchproxy/bootstrap 0.8.0 for SW-eviction-resilient startup capture ([#32](https://github.com/chrischall/signupgenius-mcp/issues/32)) ([db2d999](https://github.com/chrischall/signupgenius-mcp/commit/db2d999c652543ee9acc1003891bf62e860d3dea))
+
 ## [1.0.7](https://github.com/chrischall/signupgenius-mcp/compare/v1.0.6...v1.0.7) (2026-05-26)
 
 
