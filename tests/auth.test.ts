@@ -214,7 +214,7 @@ describe('resolveAuth', () => {
       bootstrapMock.mockRejectedValue(downErr);
 
       await expect(resolveAuth()).rejects.toThrow(/fetchproxy bridge is down/);
-      await expect(resolveAuth()).rejects.toThrow(downErr.hint.slice(0, 20));
+      await expect(resolveAuth()).rejects.toThrow(downErr.hint);
     });
 
     it('cfid/cftoken are optional — JWT alone is enough to hydrate a session', async () => {
