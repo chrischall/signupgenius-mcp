@@ -47,6 +47,7 @@
 //     legacy paths keep working unchanged.
 
 import { bootstrap } from '@fetchproxy/bootstrap';
+import { classifyBridgeError, FetchproxyBridgeDownError } from '@fetchproxy/server';
 import { loadAccount, type Account, type SessionAccount } from './config.js';
 import pkg from '../package.json' with { type: 'json' };
 
@@ -177,6 +178,13 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
         source: 'fetchproxy',
       };
     } catch (e) {
+      // Typed 0.8.0 error: SW retry already exhausted — surface `.hint` verbatim.
+      if (classifyBridgeError(e) === 'bridge_down') {
+        const downErr = e as FetchproxyBridgeDownError;
+        throw new Error(
+          `SignUpGenius auth: fetchproxy bridge is down (extension service worker unreachable after retry). ${downErr.hint}`,
+        );
+      }
       const msg = e instanceof Error ? e.message : String(e);
       throw new Error(
         'SignUpGenius auth: no SIGNUPGENIUS_USER_KEY or SIGNUPGENIUS_EMAIL/PASSWORD set, ' +
