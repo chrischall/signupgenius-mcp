@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.0...v1.1.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* **ci:** auto-merge arm guards ([#34](https://github.com/chrischall/signupgenius-mcp/issues/34)) ([2871116](https://github.com/chrischall/signupgenius-mcp/commit/2871116efb8602c5aace260d143ad8ea5a3b5e45))
+
 ## [1.1.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.0.7...v1.1.0) (2026-05-28)
 
 
