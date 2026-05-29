@@ -1,6 +1,6 @@
 {
   "name": "signupgenius-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "mcpName": "io.github.chrischall/signupgenius-mcp",
   "description": "SignUpGenius MCP server — read sign-ups, reports, and groups; add group members.",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
