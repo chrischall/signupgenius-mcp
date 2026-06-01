@@ -1,19 +1,13 @@
 #!/usr/bin/env node
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { loadDotenvSafely, runMcp } from '@chrischall/mcp-utils';
 
-try {
-  const { config } = await import('dotenv');
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  // quiet:true suppresses dotenv's startup banner — MCP uses stdout for
-  // JSON-RPC, and any extra output corrupts the stream.
-  config({ path: join(__dirname, '..', '.env'), override: false, quiet: true });
-} catch {
-  // dotenv not available — rely on process.env
-}
+// quiet .env load — MCP stdout is JSON-RPC; any extra output corrupts the stream.
+await loadDotenvSafely({
+  path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'),
+});
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { Account } from './config.js';
 import { resolveAuth, type ResolvedAuth } from './auth.js';
 import { SignUpGeniusClient } from './client.js';
@@ -46,25 +40,32 @@ const client = new SignUpGeniusClient(account, {
   configError: configError ?? undefined,
   preloaded,
 });
-const server = new McpServer({ name: 'signupgenius', version: '1.1.1' }); // x-release-please-version
 
-registerUserTools(server, client);
-registerGroupTools(server, client);
-registerSignUpTools(server, client);
-registerReportTools(server, client);
-registerPublicSignUpTools(server);
-registerRsvpTool(server, client);
+const bannerLines = account
+  ? [
+      `[signupgenius-mcp] SignUpGenius: ${account.name} (${account.baseUrl}) [${account.mode}]${
+        source === 'fetchproxy' ? ' [via fetchproxy]' : ''
+      }`,
+    ]
+  : [
+      `[signupgenius-mcp] Not configured: ${configError?.message ?? 'unknown error'}`,
+      '[signupgenius-mcp] Server is running but tool calls will fail until env vars are set.',
+    ];
+bannerLines.push(
+  '[signupgenius-mcp] Developed and maintained by AI (Claude). Use at your own discretion.',
+);
 
-if (account) {
-  const suffix = source === 'fetchproxy' ? ' [via fetchproxy]' : '';
-  console.error(
-    `[signupgenius-mcp] SignUpGenius: ${account.name} (${account.baseUrl}) [${account.mode}]${suffix}`,
-  );
-} else {
-  console.error(`[signupgenius-mcp] Not configured: ${configError?.message ?? 'unknown error'}`);
-  console.error('[signupgenius-mcp] Server is running but tool calls will fail until env vars are set.');
-}
-console.error('[signupgenius-mcp] Developed and maintained by AI (Claude). Use at your own discretion.');
-
-const transport = new StdioServerTransport();
-await server.connect(transport);
+await runMcp({
+  name: 'signupgenius',
+  version: '1.1.1', // x-release-please-version
+  banner: bannerLines.join('\n'),
+  deps: client,
+  tools: [
+    (server, c) => registerUserTools(server, c),
+    (server, c) => registerGroupTools(server, c),
+    (server, c) => registerSignUpTools(server, c),
+    (server, c) => registerReportTools(server, c),
+    (server) => registerPublicSignUpTools(server),
+    (server, c) => registerRsvpTool(server, c),
+  ],
+});

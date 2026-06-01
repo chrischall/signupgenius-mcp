@@ -48,6 +48,7 @@
 
 import { bootstrap } from '@fetchproxy/bootstrap';
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@fetchproxy/server';
+import { parseBoolEnv } from '@chrischall/mcp-utils';
 import { loadAccount, type Account, type SessionAccount } from './config.js';
 import pkg from '../package.json' with { type: 'json' };
 
@@ -74,20 +75,9 @@ export interface ResolvedAuth {
   source: 'env' | 'fetchproxy';
 }
 
-function readEnv(key: string): string | undefined {
-  const raw = process.env[key];
-  if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return undefined;
-  if (trimmed === 'undefined' || trimmed === 'null') return undefined;
-  if (/^\$\{[^}]*\}$/.test(trimmed)) return undefined;
-  return trimmed;
-}
-
 function fetchproxyDisabled(): boolean {
-  const raw = readEnv('SIGNUPGENIUS_DISABLE_FETCHPROXY');
-  if (raw === undefined) return false;
-  return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
+  // Fleet-standard *_DISABLE_* flag parser (placeholder/sentinel-safe).
+  return parseBoolEnv('SIGNUPGENIUS_DISABLE_FETCHPROXY');
 }
 
 /**

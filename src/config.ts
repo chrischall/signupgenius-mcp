@@ -1,3 +1,5 @@
+import { readEnvVar } from '@chrischall/mcp-utils';
+
 export type Account = KeyAccount | SessionAccount;
 
 export interface KeyAccount {
@@ -34,13 +36,7 @@ const DEFAULT_LOGIN_BASE_URL = 'https://www.signupgenius.com';
  * wrong identity or fail upstream with a confusing 403.
  */
 function readVar(env: Record<string, string | undefined>, key: string): string | undefined {
-  const raw = env[key];
-  if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return undefined;
-  if (trimmed === 'undefined' || trimmed === 'null') return undefined;
-  if (/^\$\{[^}]*\}$/.test(trimmed)) return undefined;
-  return trimmed;
+  return readEnvVar(key, { env });
 }
 
 function requireHttps(value: string, varName: string): string {
