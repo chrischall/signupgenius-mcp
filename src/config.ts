@@ -34,9 +34,6 @@ const DEFAULT_LOGIN_BASE_URL = 'https://www.signupgenius.com';
  * "undefined"; others leave the `${user_config.foo}` placeholder intact), and
  * a Bearer-style header built from those would silently authenticate as the
  * wrong identity or fail upstream with a confusing 403.
- *
- * Thin wrapper over `@chrischall/mcp-utils`'s `readEnvVar` so the explicit
- * `env`-source signature this module already passes around stays intact.
  */
 function readVar(env: Record<string, string | undefined>, key: string): string | undefined {
   return readEnvVar(key, { env });

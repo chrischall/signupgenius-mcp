@@ -3,9 +3,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { loadDotenvSafely, runMcp } from '@chrischall/mcp-utils';
 
-// quiet .env load — MCP uses stdout for JSON-RPC, and any extra output corrupts
-// the stream. `loadDotenvSafely` dynamically imports dotenv and no-ops when it
-// is absent (e.g. bundled runtimes), with override:false so host env wins.
+// quiet .env load — MCP stdout is JSON-RPC; any extra output corrupts the stream.
 await loadDotenvSafely({
   path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'),
 });

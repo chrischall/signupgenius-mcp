@@ -76,8 +76,7 @@ export interface ResolvedAuth {
 }
 
 function fetchproxyDisabled(): boolean {
-  // Reuses `@chrischall/mcp-utils`'s `parseBoolEnv` (placeholder/sentinel-safe,
-  // recognises 1/true/yes/on) — the fleet-standard *_DISABLE_* flag parser.
+  // Fleet-standard *_DISABLE_* flag parser (placeholder/sentinel-safe).
   return parseBoolEnv('SIGNUPGENIUS_DISABLE_FETCHPROXY');
 }
 
