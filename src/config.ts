@@ -1,3 +1,5 @@
+import { readEnvVar } from '@chrischall/mcp-utils';
+
 export type Account = KeyAccount | SessionAccount;
 
 export interface KeyAccount {
@@ -32,15 +34,12 @@ const DEFAULT_LOGIN_BASE_URL = 'https://www.signupgenius.com';
  * "undefined"; others leave the `${user_config.foo}` placeholder intact), and
  * a Bearer-style header built from those would silently authenticate as the
  * wrong identity or fail upstream with a confusing 403.
+ *
+ * Thin wrapper over `@chrischall/mcp-utils`'s `readEnvVar` so the explicit
+ * `env`-source signature this module already passes around stays intact.
  */
 function readVar(env: Record<string, string | undefined>, key: string): string | undefined {
-  const raw = env[key];
-  if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return undefined;
-  if (trimmed === 'undefined' || trimmed === 'null') return undefined;
-  if (/^\$\{[^}]*\}$/.test(trimmed)) return undefined;
-  return trimmed;
+  return readEnvVar(key, { env });
 }
 
 function requireHttps(value: string, varName: string): string {
