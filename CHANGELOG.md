@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.1...v1.1.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* adopt [@fetchproxy](https://github.com/fetchproxy) 0.13.0 (0.8 → 0.13; bridge host failover + re-pairing) ([#45](https://github.com/chrischall/signupgenius-mcp/issues/45)) ([26a6c9c](https://github.com/chrischall/signupgenius-mcp/commit/26a6c9cd0cb6309b5a08cc756a22c008c08d7b85))
+* adopt @fetchproxy/server 1.0.0 + @chrischall/mcp-utils 0.5.0 ([#48](https://github.com/chrischall/signupgenius-mcp/issues/48)) ([222730a](https://github.com/chrischall/signupgenius-mcp/commit/222730a8dffa8d541aafe53a0d93e349388b519f))
+
 ## [1.1.1](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.0...v1.1.1) (2026-05-29)
 
 
