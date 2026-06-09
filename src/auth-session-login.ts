@@ -9,9 +9,19 @@
  *      including the scraped csrfToken. On success the server 302s and sets
  *      an `accessToken` JWT cookie scoped to .signupgenius.com.
  *
+ * The mechanics (CSRF scrape, cookie jar, form POST, success-marker cookie)
+ * are delegated to `sessionLoginFlow` from `@chrischall/mcp-utils` — this
+ * module was the donor that primitive was extracted from, so only the
+ * SUG-specific bits remain here: the form-field names, the static form
+ * params, and the `c.Register` failure-redirect classification (the shared
+ * flow has no failure-classifier hook, so we sniff the credential POST's
+ * `Location` header via the injectable fetch and translate in a catch).
+ *
  * SSO accounts (Google/Apple/Facebook/Microsoft) and 2FA-enabled accounts are
  * unsupported — same caveat as canvas-parent-mcp's session mode.
  */
+
+import { sessionLoginFlow } from '@chrischall/mcp-utils';
 
 export interface SessionLoginInput {
   loginUrl?: string; // override for testing
@@ -30,114 +40,52 @@ const DEFAULT_LOGIN_BASE = 'https://www.signupgenius.com';
 
 export async function sessionLogin(input: SessionLoginInput): Promise<SessionLoginResult> {
   const base = input.loginUrl ?? DEFAULT_LOGIN_BASE;
-  const jar = new CookieJar();
 
-  // Step 1: fetch login page, extract csrfToken
-  const loginPage = await fetch(`${base}/login`, {
-    headers: { 'User-Agent': USER_AGENT, Accept: 'text/html' },
-  });
-  if (!loginPage.ok) {
-    throw new LoginFailedError(`login page returned ${loginPage.status}`);
+  // A failed login 302s to /index.cfm?go=c.Register (the configured failpage).
+  // The shared flow only reports "no accessToken cookie" — record the credential
+  // POST's redirect target so we can give the clearer bad-credentials message.
+  let postLocation = '';
+  const locationRecordingFetch: typeof fetch = async (url, init) => {
+    const res = await fetch(url, init);
+    if (init?.method === 'POST') {
+      postLocation = res.headers.get('location') ?? '';
+    }
+    return res;
+  };
+
+  try {
+    const { token, cookies } = await sessionLoginFlow({
+      loginUrl: `${base}/login`,
+      postUrl: `${base}/index.cfm?go=c.Login`,
+      csrfRegex: /name="csrfToken"\s+value="([^"]+)"/,
+      tokenField: 'accessToken',
+      emailField: 'loginemail',
+      passwordField: 'pword',
+      email: input.email,
+      password: input.password,
+      extraFields: {
+        successpage: 'c.jump&jump=/index.cfm?go=c.MyAccount',
+        failpage: 'c.Register',
+        ScreenWidth: '2000',
+        ScreenHeight: '1200',
+        formaction: '1',
+        formName: 'loginform',
+        refererUrl: '',
+      },
+      userAgent: USER_AGENT,
+      fetchImpl: locationRecordingFetch,
+    });
+    return { accessToken: token, cookieHeader: cookies };
+  } catch (err) {
+    if (postLocation.includes('c.Register')) {
+      throw new LoginFailedError('login form rejected the credentials');
+    }
+    throw new LoginFailedError(err instanceof Error ? err.message : String(err));
   }
-  jar.absorb(loginPage.headers);
-  const html = await loginPage.text();
-  const csrfMatch = /name="csrfToken"\s+value="([^"]+)"/.exec(html);
-  if (!csrfMatch) {
-    throw new LoginFailedError('csrfToken not found on login page');
-  }
-  const csrfToken = csrfMatch[1]!;
-
-  // Step 2: POST credentials
-  const body = new URLSearchParams({
-    csrfToken,
-    loginemail: input.email,
-    pword: input.password,
-    successpage: 'c.jump&jump=/index.cfm?go=c.MyAccount',
-    failpage: 'c.Register',
-    ScreenWidth: '2000',
-    ScreenHeight: '1200',
-    formaction: '1',
-    formName: 'loginform',
-    refererUrl: '',
-  }).toString();
-
-  const postRes = await fetch(`${base}/index.cfm?go=c.Login`, {
-    method: 'POST',
-    redirect: 'manual',
-    headers: {
-      'User-Agent': USER_AGENT,
-      Accept: 'text/html',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Referer: `${base}/login`,
-      Cookie: jar.header(),
-    },
-    body,
-  });
-  jar.absorb(postRes.headers);
-
-  // A successful login redirects to /index.cfm?go=c.MyAccount. A failed login
-  // 302s to /index.cfm?go=c.Register (the configured failpage) or returns 200
-  // with the login page rerendered. Either way, no accessToken cookie is set.
-  const accessToken = jar.get('accessToken');
-  if (!accessToken) {
-    const location = postRes.headers.get('location') ?? '';
-    const detail = location.includes('c.Register')
-      ? 'login form rejected the credentials'
-      : `login did not yield an accessToken (status ${postRes.status})`;
-    throw new LoginFailedError(detail);
-  }
-
-  return { accessToken, cookieHeader: jar.header() };
 }
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
-
-/** Minimal Netscape-cookie-style jar — only tracks name/value, no domain matching. */
-class CookieJar {
-  private cookies = new Map<string, string>();
-
-  absorb(headers: Headers): void {
-    const setCookies = readSetCookieHeaders(headers);
-    for (const raw of setCookies) {
-      const semi = raw.indexOf(';');
-      const pair = semi >= 0 ? raw.slice(0, semi) : raw;
-      const eq = pair.indexOf('=');
-      if (eq <= 0) continue;
-      const name = pair.slice(0, eq).trim();
-      const value = pair.slice(eq + 1).trim();
-      if (!name) continue;
-      this.cookies.set(name, value);
-    }
-  }
-
-  get(name: string): string | undefined {
-    return this.cookies.get(name);
-  }
-
-  header(): string {
-    return Array.from(this.cookies.entries())
-      .map(([k, v]) => `${k}=${v}`)
-      .join('; ');
-  }
-}
-
-/**
- * Node's Headers can carry multiple Set-Cookie values; Headers.get joins them
- * with ", " which breaks parsing because cookie attributes also use commas
- * (Expires=Wed, 17 Jun 2026 ...). Headers.getSetCookie() is the spec'd way
- * (Node ≥19, undici ≥5.2) — fall back to the single-string getter for older
- * runtimes by splitting only on commas that precede a `name=` token.
- */
-function readSetCookieHeaders(headers: Headers): string[] {
-  const anyHeaders = headers as Headers & { getSetCookie?: () => string[] };
-  if (typeof anyHeaders.getSetCookie === 'function') {
-    return anyHeaders.getSetCookie();
-  }
-  const raw = headers.get('set-cookie');
-  if (!raw) return [];
-  return raw.split(/,(?=\s*[A-Za-z0-9_-]+=)/);
-}
 
 export class LoginFailedError extends Error {
   constructor(public detail: string) {
