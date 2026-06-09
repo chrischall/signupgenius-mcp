@@ -38,10 +38,17 @@ describe('sessionLogin', () => {
       }
       // POST to c.Login
       expect(u).toContain('go=c.Login');
+      expect(init?.method).toBe('POST');
       const body = (init?.body as string) ?? '';
       expect(body).toContain('csrfToken=csrf-real');
       expect(body).toContain('loginemail=me%40x.com');
       expect(body).toContain('pword=secret');
+      // SUG-specific static form fields must survive the swap to the shared flow.
+      expect(body).toContain('failpage=c.Register');
+      expect(body).toContain('formName=loginform');
+      // The login page's cookies ride along on the credential POST.
+      const cookie = new Headers(init?.headers as HeadersInit).get('cookie') ?? '';
+      expect(cookie).toContain('cfid=abc');
       return htmlResponseWithCookies('', 302, [
         'accessToken=jwt-token; Domain=signupgenius.com; Path=/; HttpOnly; Secure',
         'refreshToken=refresh-uuid; Domain=signupgenius.com; Path=/; HttpOnly; Secure',
@@ -80,14 +87,16 @@ describe('sessionLogin', () => {
       new Response('', { status: 503 }) as unknown as Response,
     );
     await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.toBeInstanceOf(LoginFailedError);
-    await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.toThrow(/login page returned 503/);
+    await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.toThrow(/login page returned 503/i);
   });
 
   it('throws when csrfToken cannot be found', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       htmlResponseWithCookies('<html>no token</html>', 200, []),
     );
-    await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.toThrow(/csrfToken not found/);
+    await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.toThrow(
+      /csrf token not found/i,
+    );
   });
 
   it('detects credential failure when server redirects to c.Register', async () => {
@@ -97,8 +106,11 @@ describe('sessionLogin', () => {
       }
       return htmlResponseWithCookies('', 302, [], '/index.cfm?go=c.Register');
     });
+    await expect(sessionLogin({ email: 'a', password: 'wrong' })).rejects.toBeInstanceOf(
+      LoginFailedError,
+    );
     await expect(sessionLogin({ email: 'a', password: 'wrong' })).rejects.toThrow(
-      /rejected the credentials/,
+      /login form rejected the credentials/,
     );
   });
 
@@ -109,70 +121,46 @@ describe('sessionLogin', () => {
       }
       return htmlResponseWithCookies('', 200, []);
     });
+    await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.toBeInstanceOf(
+      LoginFailedError,
+    );
     await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.toThrow(
-      /did not yield an accessToken/,
+      /did not yield a[n]? accessToken/,
+    );
+    // Must NOT be misclassified as a credential rejection.
+    await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.not.toThrow(
+      /login form rejected the credentials/,
     );
   });
 
-  /** Shadow Headers.getSetCookie with an own undefined property to force the legacy fallback. */
-  function withoutGetSetCookie(res: Response): Response {
-    Object.defineProperty(res.headers, 'getSetCookie', { value: undefined, configurable: true });
-    return res;
-  }
-
-  it('falls back to splitting headers.get("set-cookie") when getSetCookie is unavailable', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-      if (String(url).endsWith('/login')) {
-        const headers = new Headers();
-        // Single concatenated set-cookie string, as some legacy runtimes return.
-        // The splitter must NOT cut on commas inside `Expires=Wed, 17 Jun ...`
-        // and MUST cut before the second cookie's `name=`.
-        headers.append(
-          'set-cookie',
-          'cfid=legacy; Path=/; Expires=Wed, 17 Jun 2026 15:00:00 GMT, csrf=skip; Path=/',
-        );
-        return withoutGetSetCookie(new Response(fakeLoginPageHtml('csrf-legacy'), { status: 200, headers }));
-      }
-      const headers = new Headers();
-      headers.append('set-cookie', 'accessToken=legacy-jwt; Path=/');
-      return withoutGetSetCookie(new Response('', { status: 302, headers }));
+  it('wraps non-Error throws from fetch in LoginFailedError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw 'socket exploded';
     });
-
-    const result = await sessionLogin({ email: 'a', password: 'b' });
-    expect(result.accessToken).toBe('legacy-jwt');
-    expect(result.cookieHeader).toContain('cfid=legacy');
-    expect(result.cookieHeader).toContain('csrf=skip');
+    await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.toBeInstanceOf(
+      LoginFailedError,
+    );
+    await expect(sessionLogin({ email: 'a', password: 'b' })).rejects.toThrow(/socket exploded/);
   });
 
-  it('handles a response with no set-cookie header via the legacy fallback', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-      if (String(url).endsWith('/login')) {
-        return withoutGetSetCookie(new Response(fakeLoginPageHtml(), { status: 200 }));
-      }
-      const headers = new Headers();
-      headers.append('set-cookie', 'accessToken=t; Path=/');
-      return withoutGetSetCookie(new Response('', { status: 302, headers }));
-    });
-    const result = await sessionLogin({ email: 'a', password: 'b' });
-    expect(result.accessToken).toBe('t');
-  });
-
-  it('ignores malformed set-cookie pairs that lack name= or have a whitespace-only name', async () => {
+  it('drops deletion-marker cookies from the merged cookie header (shared-jar upgrade)', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if (String(url).endsWith('/login')) {
         return htmlResponseWithCookies(fakeLoginPageHtml(), 200, [
-          'novalue', // no `=`
-          '=novalueeither', // `=` at position 0 → caught by eq<=0 guard
-          ' =wsname', // `=` not at 0, but the chars before trim to empty
-          'good=1',
+          'cfid=abc; Path=/',
+          'stale=old-value; Path=/; Max-Age=0',
         ]);
       }
-      return htmlResponseWithCookies('', 302, ['accessToken=jwt; Path=/']);
+      return htmlResponseWithCookies('', 302, [
+        'accessToken=jwt; Path=/',
+        'gone=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+      ], '/index.cfm?go=c.MyAccount');
     });
     const result = await sessionLogin({ email: 'a', password: 'b' });
-    expect(result.cookieHeader).toContain('good=1');
-    expect(result.cookieHeader).toContain('accessToken=jwt');
-    expect(result.cookieHeader).not.toContain('novalue');
-    expect(result.cookieHeader).not.toContain('wsname');
+    expect(result.accessToken).toBe('jwt');
+    expect(result.cookieHeader).toContain('cfid=abc');
+    expect(result.cookieHeader).not.toContain('stale=');
+    expect(result.cookieHeader).not.toContain('gone=');
   });
 });
