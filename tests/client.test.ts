@@ -329,6 +329,80 @@ describe('SignUpGeniusClient — session mode', () => {
   });
 });
 
+describe('SignUpGeniusClient — session expiry detection (status + 200 legacy-HTML login page)', () => {
+  const fakeLogin = vi.fn(async () => ({ accessToken: 'jwt-1', cookieHeader: 'a=b' }));
+  const newClient = () => new SignUpGeniusClient(sessionAccount, { sessionLogin: fakeLogin });
+  afterEach(() => fakeLogin.mockClear());
+
+  // A 200 that renders the legacy HTML login page (instead of JSON) means the
+  // ColdFusion session lapsed. mockFetch can't set headers, so build the
+  // Responses by hand: an html-typed login page, then a normal JSON success.
+  const LOGIN_PAGE =
+    '<!doctype html><html><body><form name="loginform">' +
+    '<input name="loginemail"></form></body></html>';
+
+  function mockResponses(...responses: Response[]) {
+    let i = 0;
+    return vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      const r = responses[Math.min(i, responses.length - 1)]!;
+      i++;
+      return r as unknown as Response;
+    });
+  }
+
+  it('treats a 200 legacy-HTML login page as expiry: re-logs-in and replays once', async () => {
+    const fetchSpy = mockResponses(
+      new Response(LOGIN_PAGE, { status: 200, headers: { 'content-type': 'text/html' } }),
+      new Response(JSON.stringify({ data: { ok: true }, message: [], success: true }), { status: 200 }),
+    );
+    fakeLogin
+      .mockImplementationOnce(async () => ({ accessToken: 'jwt-1', cookieHeader: 'a=b' }))
+      .mockImplementationOnce(async () => ({ accessToken: 'jwt-2', cookieHeader: 'a=c' }));
+    const client = newClient();
+    const result = await client.request<{ ok: boolean }>('/member/profile');
+    expect(result.data).toEqual({ ok: true });
+    expect(fakeLogin).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const retryHeaders = (fetchSpy.mock.calls[1]![1] as RequestInit).headers as Record<string, string>;
+    expect(retryHeaders.Authorization).toBe('Bearer jwt-2');
+  });
+
+  it('detects the login page even when the response carries no content-type', async () => {
+    // A header-less 200 must still be body-sniffed (the `if (ct && !looksHtml)`
+    // early-out only fires when a non-html content-type is present).
+    const headerless = new Response(LOGIN_PAGE, { status: 200 });
+    headerless.headers.delete('content-type');
+    const fetchSpy = mockResponses(
+      headerless,
+      new Response(JSON.stringify({ data: 1, message: [], success: true }), { status: 200 }),
+    );
+    const client = newClient();
+    const result = await client.request('/x');
+    expect(result.data).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT treat an unrelated html 200 as expiry — surfaces a parse error, no re-login', async () => {
+    mockResponses(
+      new Response('<html><body>maintenance</body></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }),
+    );
+    const client = newClient();
+    await expect(client.request('/x')).rejects.toThrow(/non-JSON body for \/x/);
+    expect(fakeLogin).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT treat a 403 as session expiry (Pro-permission failure, not a lapsed session)', async () => {
+    // 403 must surface as AuthError without a re-login attempt.
+    mockResponses(new Response('', { status: 403 }));
+    const client = newClient();
+    await expect(client.request('/x')).rejects.toBeInstanceOf(AuthError);
+    expect(fakeLogin).toHaveBeenCalledOnce();
+  });
+});
+
 describe('SignUpGeniusClient — fetchproxy-preloaded session', () => {
   // The fetchproxy auth path hands the client a pre-loaded JWT + cookie
   // header and a session account with empty email/password. The client

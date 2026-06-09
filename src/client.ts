@@ -1,7 +1,14 @@
+import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import type { Account } from './config.js';
 import { sessionLogin as defaultSessionLogin } from './auth-session-login.js';
 
 export type SessionLoginFn = typeof defaultSessionLogin;
+
+/** The cookie session shape this MCP threads through `CookieSessionManager`. */
+interface SugSession {
+  accessToken: string;
+  cookieHeader: string;
+}
 
 export interface RequestOpts {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -29,13 +36,38 @@ interface LegacyEnvelope<T> {
   SUCCESS: boolean;
 }
 
+/**
+ * Detect a session that lapsed server-side. SignUpGenius signals expiry two
+ * different ways, both of which must trigger a re-login:
+ *
+ *  1. A `401` on the v3 JSON API / legacy SUGboxAPI dispatcher — the JWT/cookies
+ *     are stale. (403 is a Pro-permission failure, not expiry — left alone.)
+ *  2. A `200` that renders the legacy HTML **login page** instead of JSON — the
+ *     ColdFusion session lapsed and the server quietly bounced us to the form.
+ *     Scoped to the login page (its `loginform`/`loginemail`/`go=c.Login`
+ *     markers) so an unrelated non-JSON 200 still surfaces as a parse error
+ *     rather than masquerading as an expiry.
+ *
+ * Reads a clone so the caller can still consume the original body.
+ */
+async function isSessionExpired(res: Response): Promise<boolean> {
+  if (res.status === 401) return true;
+  if (res.status !== 200) return false;
+  const ct = res.headers.get('content-type') ?? '';
+  const looksHtml = ct.includes('text/html');
+  // Only sniff the body for a 200 that could plausibly be the HTML login page;
+  // skip JSON responses entirely (the hot path) so we don't clone every call.
+  if (ct && !looksHtml) return false;
+  const text = await res.clone().text();
+  return /loginform|loginemail|go=c\.Login/i.test(text);
+}
+
 export class SignUpGeniusClient {
   private account: Account | null;
   private configError: Error | null;
-  private accessToken: string | null = null;
-  private cookieHeader: string | null = null;
-  private refreshInFlight: Promise<void> | null = null;
   private sessionLoginFn: SessionLoginFn;
+  /** Present only in session/fetchproxy mode; owns login + expiry-replay. */
+  private session: CookieSessionManager<SugSession> | null = null;
 
   /**
    * Accepts either a fully-resolved Account or a deferred error from
@@ -45,8 +77,8 @@ export class SignUpGeniusClient {
    *
    * `preloaded` is the fetchproxy escape hatch: when set, the client uses
    * the supplied JWT + cookie header as-if it had just successfully run
-   * `sessionLogin()`. On a 401 it falls back to the lazy login flow only if
-   * usable credentials are present on the account — otherwise the 401
+   * `sessionLogin()`. On expiry it falls back to the lazy login flow only if
+   * usable credentials are present on the account — otherwise the expiry
    * surfaces verbatim (re-sign-in is required in the browser).
    */
   constructor(
@@ -60,10 +92,47 @@ export class SignUpGeniusClient {
     this.account = account;
     this.configError = opts.configError ?? null;
     this.sessionLoginFn = opts.sessionLogin ?? defaultSessionLogin;
-    if (opts.preloaded) {
-      this.accessToken = opts.preloaded.accessToken;
-      this.cookieHeader = opts.preloaded.cookieHeader;
+    if (account?.mode === 'session') {
+      this.session = this.makeSessionManager(account, opts.preloaded);
     }
+  }
+
+  /**
+   * Build the cookie-session manager for session/fetchproxy mode.
+   *
+   * `login` mints a fresh session. A `preloaded` set (fetchproxy) is consumed
+   * exactly once on the first login so the very first request reuses the
+   * browser's JWT/cookies without a form POST. After that — and in plain
+   * session mode — it runs `sessionLogin()`. When no credentials are present
+   * (the fetchproxy account has empty email/password), a re-login is
+   * impossible: throwing here makes `withSession` surface the original
+   * expired-looking response, so the user is told to re-sign-in in the browser
+   * rather than looping on a doomed re-login.
+   */
+  private makeSessionManager(
+    acct: Extract<Account, { mode: 'session' }>,
+    preloaded?: { accessToken: string; cookieHeader: string },
+  ): CookieSessionManager<SugSession> {
+    let pending = preloaded;
+    return new CookieSessionManager<SugSession>({
+      login: async () => {
+        if (pending) {
+          const seeded = pending;
+          pending = undefined;
+          return seeded;
+        }
+        if (!acct.email || !acct.password) {
+          throw new AuthError(401);
+        }
+        const result = await this.sessionLoginFn({
+          loginUrl: acct.loginBaseUrl,
+          email: acct.email,
+          password: acct.password,
+        });
+        return { accessToken: result.accessToken, cookieHeader: result.cookieHeader };
+      },
+      isExpired: isSessionExpired,
+    });
   }
 
   describe(): { name: string; mode: Account['mode']; baseUrl: string } | { error: string } {
@@ -118,18 +187,19 @@ export class SignUpGeniusClient {
   async preProcessSignUp(urlid: string): Promise<void> {
     this.requireMode('session', 'preProcessSignUp');
     const acct = this.requireAccount() as Extract<Account, { mode: 'session' }>;
-    await this.ensureAuth();
     const url = `${acct.legacyBaseUrl}/index.cfm?go=s.PreProcessSignup&URLID=${encodeURIComponent(urlid)}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      redirect: 'manual',
-      headers: {
-        ...this.authHeaders(),
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'text/html',
-      },
-      body: 'ScreenWidth=2000&ScreenHeight=1200',
-    });
+    const res = await this.session!.withSession((session) =>
+      fetch(url, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          ...sessionAuthHeaders(session),
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'text/html',
+        },
+        body: 'ScreenWidth=2000&ScreenHeight=1200',
+      }),
+    );
     // The browser sees a 301 → /index.cfm?go=s.ProcessSignup. A 200 means the
     // server rendered an error page instead; a 4xx/5xx means the JWT/cookies
     // are stale. Treat anything other than the documented redirect codes as
@@ -174,60 +244,41 @@ export class SignUpGeniusClient {
   }
 
   /**
-   * Fetch with auth attached. Session mode logs in lazily on first call and
-   * re-mints credentials transparently on a 401. Key mode is stateless.
+   * Fetch with auth attached. Key mode is stateless. Session/fetchproxy mode
+   * routes through the `CookieSessionManager`, which logs in lazily on the
+   * first call and — on a detected expiry (401 or a 200 legacy-HTML login
+   * page, see {@link isSessionExpired}) — re-mints credentials and replays the
+   * request exactly once.
    */
   private async authedFetch(
     url: string,
     init: { method: string; body?: BodyInit; headers?: Record<string, string> },
-    isRetry = false,
   ): Promise<Response> {
-    await this.ensureAuth();
-    const res = await fetch(url, {
-      method: init.method,
-      headers: { Accept: 'application/json', ...(init.headers ?? {}), ...this.authHeaders() },
-      body: init.body,
-    });
-
-    if (res.status === 401 && this.account?.mode === 'session' && !isRetry) {
-      // fetchproxy path has empty email/password — we can't re-login here.
-      // Let the 401 propagate so the user is told to re-sign-in in the browser.
-      if (this.account.email && this.account.password) {
-        await this.ensureAuth({ force: true });
-        return this.authedFetch(url, init, true);
-      }
-    }
-    return res;
-  }
-
-  private authHeaders(): Record<string, string> {
-    if (this.account?.mode === 'session') {
-      return { Authorization: `Bearer ${this.accessToken!}`, Cookie: this.cookieHeader! };
-    }
-    return {}; // key mode: user_key is in the query string
-  }
-
-  private async ensureAuth(opts: { force?: boolean } = {}): Promise<void> {
-    if (this.account?.mode !== 'session') return;
-    if (!opts.force && this.accessToken && this.cookieHeader) return;
-    if (this.refreshInFlight) return this.refreshInFlight;
-
-    const acct = this.account;
-    this.refreshInFlight = (async () => {
-      const result = await this.sessionLoginFn({
-        loginUrl: acct.loginBaseUrl,
-        email: acct.email,
-        password: acct.password,
+    if (!this.session) {
+      // key mode: stateless, user_key rides in the query string.
+      return fetch(url, {
+        method: init.method,
+        headers: { Accept: 'application/json', ...(init.headers ?? {}) },
+        body: init.body,
       });
-      this.accessToken = result.accessToken;
-      this.cookieHeader = result.cookieHeader;
-    })();
-    try {
-      await this.refreshInFlight;
-    } finally {
-      this.refreshInFlight = null;
     }
+    return this.session.withSession((session) =>
+      fetch(url, {
+        method: init.method,
+        headers: {
+          Accept: 'application/json',
+          ...(init.headers ?? {}),
+          ...sessionAuthHeaders(session),
+        },
+        body: init.body,
+      }),
+    );
   }
+}
+
+/** Bearer + Cookie headers for a logged-in session. */
+function sessionAuthHeaders(session: SugSession): Record<string, string> {
+  return { Authorization: `Bearer ${session.accessToken}`, Cookie: session.cookieHeader };
 }
 
 /**
