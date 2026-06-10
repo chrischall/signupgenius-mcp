@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.2...v1.1.3) (2026-06-10)
+
+
+### Documentation
+
+* flesh out CLAUDE.md to cohort quality ([#54](https://github.com/chrischall/signupgenius-mcp/issues/54)) ([c70079c](https://github.com/chrischall/signupgenius-mcp/commit/c70079c2b9891efe9863283b7712f849c84e35c0))
+
 ## [1.1.2](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.1...v1.1.2) (2026-06-04)
 
 
