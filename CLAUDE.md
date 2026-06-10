@@ -94,7 +94,7 @@ tests/                    # mirrors src/ (tests/tools/* for tool files). Mocks S
                           #   @fetchproxy/bootstrap / sessionLogin at the module boundary; no network.
 ```
 
-Each `tools/*.ts` exports `registerXxxTools(server, client)` (public-signup's is `(server, fetcher?)` since it bypasses the client). `src/index.ts` wires all six. Schemas use the const-zod pattern: `const args = z.object({...})`; the SDK gets `args.shape`, the handler does `args.parse(raw)`.
+Each `tools/*.ts` exports a `registerXxx…(server, client)` function — `registerXxxTools` (plural) for the multi-tool files, but the single-tool `rsvp.ts` exports `registerRsvpTool` (singular). (public-signup's is `(server, fetcher?)` since it bypasses the client.) `src/index.ts` wires all six. Schemas use the const-zod pattern: `const args = z.object({...})`; the SDK gets `args.shape`, the handler does `args.parse(raw)`.
 
 Registration is mode-aware: `client.mode` (which defaults to `'session'` when config is deferred) chooses key-vs-session endpoint paths, gates the session-only `legacy_get_my_signups` and `signupgenius_rsvp` (skipped entirely outside session mode), while report tools always register but throw `ModeMismatchError` if invoked outside key mode.
 
