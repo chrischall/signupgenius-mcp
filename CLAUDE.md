@@ -14,6 +14,34 @@ Auth resolution lives in `src/auth.ts` (Pattern A template — see "Auth resolut
 
 `SIGNUPGENIUS_DISABLE_FETCHPROXY=1` skips path 3 entirely and turns a missing/partial env config into a hard error at tool-call time — useful for headless CI where the browser bridge can't apply.
 
+## Environment
+
+No env vars are *required* — with none set, the server falls through to the fetchproxy browser bridge (path 3). The three auth paths and their env vars are resolved in `src/config.ts` (`loadAccount()`) and `src/auth.ts` (`resolveAuth()`). All vars pass through `readEnvVar` from `@chrischall/mcp-utils`, which treats empty/whitespace, the literal strings `"undefined"`/`"null"`, and unsubstituted `${...}` placeholders as unset (Claude Desktop sometimes emits these for blank `user_config` refs).
+
+Priority order: **key > full session > fetchproxy > error**. A `SIGNUPGENIUS_USER_KEY` always wins; if both key and `EMAIL`/`PASSWORD` are present, `loadAccount()` logs a precedence warning to stderr and uses key mode.
+
+```
+# Path 1 — Pro v2/k API key (the only mode that can call slot reports)
+SIGNUPGENIUS_USER_KEY=...                  # presence selects key mode
+SIGNUPGENIUS_BASE_URL=...                  # optional override, must be https; default https://api.signupgenius.com/v2/k
+SIGNUPGENIUS_NAME=...                      # optional display name; defaults to baseUrl host
+
+# Path 2 — session email/password login (free accounts)
+SIGNUPGENIUS_EMAIL=...                     # BOTH required together
+SIGNUPGENIUS_PASSWORD=...                  # setting only one is a hard "Incomplete session config" error
+SIGNUPGENIUS_BASE_URL=...                  # optional, must be https; default https://api.signupgenius.com/v3
+SIGNUPGENIUS_LEGACY_BASE_URL=...           # optional, must be https; default https://www.signupgenius.com (the /SUGboxAPI.cfm dispatcher)
+SIGNUPGENIUS_LOGIN_URL=...                 # optional, must be https; default https://www.signupgenius.com (sessionLogin form base)
+SIGNUPGENIUS_NAME=...                      # optional display name; defaults to the email
+
+# Path 3 — fetchproxy bootstrap (zero-config; default when no creds set)
+SIGNUPGENIUS_DISABLE_FETCHPROXY=1          # opt out of path 3; missing creds then become a hard error
+```
+
+Non-https values for any `*_URL`/`*_BASE_URL` override throw `<var> must be an https URL`. Setting exactly one of `SIGNUPGENIUS_EMAIL`/`SIGNUPGENIUS_PASSWORD` throws an "Incomplete session config" error that propagates (it does **not** fall through to fetchproxy — only the "nothing set at all" case does).
+
+**Deferred-config behavior:** `src/index.ts` wraps `resolveAuth()` in a try/catch and keeps the error in `configError` rather than throwing. The server always boots — so an MCP host can complete its install-time tool listing before the user has filled in `user_config` or signed into signupgenius.com. The same error message is re-raised at tool-call time by `SignUpGeniusClient.requireAccount()`. `signupgenius_get_public_signup` needs no auth and works even with a deferred config error.
+
 ## Auth resolution (Pattern A template)
 
 `src/auth.ts` is the canonical "browser-bootstrap + Node-direct" shape used across our MCP family. Sibling MCPs (ofw-mcp, resy-mcp, opentable-mcp, …) follow the same structure — keep it flat, the path-selection explicit, and the error messages actionable.
@@ -36,25 +64,64 @@ Auth resolution lives in `src/auth.ts` (Pattern A template — see "Auth resolut
 
 `vitest.config.ts` enforces **100% lines/branches/functions/statements** on `src/**` (excl. `src/index.ts`). Coverage gaps fail CI — write the failing test first, then the code.
 
-## Code layout
+## Architecture
 
-- `src/auth.ts`, `src/auth-session-login.ts`, `src/config.ts`, `src/client.ts` — see "Auth resolution" above.
-- `src/index.ts` — entry point. Boots `McpServer`, calls `resolveAuth()`, wires the four tool-registration modules.
-- `src/tools/` — one file per domain: `user.ts`, `groups.ts`, `signups.ts`, `reports.ts`, `public-signup.ts`, `rsvp.ts`, plus `_shared.ts` for `textContent()` and other helpers. Tests mirror this layout under `tests/tools/`.
+Stdio MCP server. `src/index.ts` loads `.env` quietly, runs `resolveAuth()`, constructs one `SignUpGeniusClient`, and hands it to `runMcp()` from `@chrischall/mcp-utils` along with six tool-registration callbacks.
+
+```
+src/
+  index.ts                # entry — loadDotenvSafely, resolveAuth() (deferred on error),
+                          #   build SignUpGeniusClient, runMcp({ name, version, banner, deps, tools })
+  config.ts               # loadAccount(env) → discriminated union Account = KeyAccount | SessionAccount; env-var
+                          #   resolution + https validation + precedence warnings. Throws on missing/partial config.
+  auth.ts                 # resolveAuth(): three-path priority (key/session env → fetchproxy bootstrap → error).
+                          #   Catches only the "Missing SignUpGenius auth config" marker so partial-config errors propagate.
+  auth-session-login.ts   # sessionLogin(): legacy form-POST login via sessionLoginFlow (@chrischall/mcp-utils).
+                          #   Scrapes csrfToken, POSTs /index.cfm?go=c.Login, returns JWT + cookie header.
+                          #   LoginFailedError on a c.Register failure-redirect (bad creds / SSO / 2FA unsupported).
+  client.ts               # SignUpGeniusClient: request() routing (key=query user_key vs session=legacy SUGboxAPI),
+                          #   CookieSessionManager for lazy login + 401/HTML-login expiry replay, preProcessSignUp(),
+                          #   requireMode(), envelope normalizers. Error types: AuthError, UnreachableError, ModeMismatchError.
+  tools/
+    _shared.ts            # textContent() = textResult from @chrischall/mcp-utils (the standard MCP text block)
+    user.ts               # registerUserTools — signupgenius_get_profile
+    groups.ts             # registerGroupTools — list_groups, list/get_group_member, add_group_member (write)
+    signups.ts            # registerSignUpTools — list_created_{active,expired,all}, list_invited/signedupfor, legacy_get_my_signups
+    reports.ts            # registerReportTools — report_{all,filled,available} (Pro/key-only, requireMode('key'))
+    public-signup.ts      # registerPublicSignUpTools — get_public_signup (no auth; scrapes the /go/ HTML page directly)
+    rsvp.ts               # registerRsvpTool — signupgenius_rsvp (session-only write; PreProcessSignup→getSignupInfo→submit)
+tests/                    # mirrors src/ (tests/tools/* for tool files). Mocks SignUpGeniusClient.request /
+                          #   @fetchproxy/bootstrap / sessionLogin at the module boundary; no network.
+```
+
+Each `tools/*.ts` exports `registerXxxTools(server, client)` (public-signup's is `(server, fetcher?)` since it bypasses the client). `src/index.ts` wires all six. Schemas use the const-zod pattern: `const args = z.object({...})`; the SDK gets `args.shape`, the handler does `args.parse(raw)`.
+
+Registration is mode-aware: `client.mode` (which defaults to `'session'` when config is deferred) chooses key-vs-session endpoint paths, gates the session-only `legacy_get_my_signups` and `signupgenius_rsvp` (skipped entirely outside session mode), while report tools always register but throw `ModeMismatchError` if invoked outside key mode.
 
 ## Tool surface
 
 14 read + 2 write. Pro-only tools (slot reports) call `client.requireMode('key', …)` and throw `ModeMismatchError` in session/fetchproxy mode. The public-signup tool needs no auth and works even when `resolveAuth()` has deferred a config error.
 
-| Domain | Tools | Mode |
-| --- | --- | --- |
-| Profile | `signupgenius_get_profile` | both |
-| Groups | `signupgenius_list_groups`, `_list_group_members`, `_get_group_member`, `_add_group_member` (write) | both |
-| Sign-ups | `_list_created_active`, `_expired`, `_all`, `_list_invited`, `_list_signedupfor` | both |
-| Sign-ups (legacy) | `_legacy_get_my_signups` | session only |
-| Reports | `_report_all`, `_report_filled`, `_report_available` | **key only** |
-| Public page | `_get_public_signup` | no auth |
-| RSVP | `_rsvp` (write) | session only |
+Endpoint paths below are mode-dependent: key mode hits `/v2/k/...` (with `user_key` in the query string), session mode hits `/v3/...` or the legacy `/SUGboxAPI.cfm?go=<action>` dispatcher.
+
+| Tool | File | Endpoint(s) | Mode | Kind |
+| --- | --- | --- | --- | --- |
+| `signupgenius_get_profile` | `tools/user.ts` | session `/member/profile` · key `/user/profile` | both | read |
+| `signupgenius_list_groups` | `tools/groups.ts` | session `/groups/all` · key `/groups` | both | read |
+| `signupgenius_list_group_members` | `tools/groups.ts` | `/groups/{id}/members` | both | read |
+| `signupgenius_get_group_member` | `tools/groups.ts` | `/groups/{id}/members/{memberId}/details` | both | read |
+| `signupgenius_add_group_member` | `tools/groups.ts` | `POST /groups/{id}/members/create` | both | **write** |
+| `signupgenius_list_created_active` | `tools/signups.ts` | session `/signups/created` · key `/signups/created/active` | both | read |
+| `signupgenius_list_created_expired` | `tools/signups.ts` | session `/signups/created` (alias) · key `/signups/created/expired` | both | read |
+| `signupgenius_list_created_all` | `tools/signups.ts` | session `/signups/created` · key `/signups/created/all` | both | read |
+| `signupgenius_list_invited` | `tools/signups.ts` | session `/signups/invited` · key `/signups/invited/active` | both | read |
+| `signupgenius_list_signedupfor` | `tools/signups.ts` | session `/signups/signedupfor` · key `/signups/signedupfor/active` | both | read |
+| `signupgenius_legacy_get_my_signups` | `tools/signups.ts` | legacy `SUGboxAPI.cfm?go=t.getMySignups` | session only | read |
+| `signupgenius_report_all` | `tools/reports.ts` | `/signups/report/all/{signupId}` | **key only** | read |
+| `signupgenius_report_filled` | `tools/reports.ts` | `/signups/report/filled/{signupId}` | **key only** | read |
+| `signupgenius_report_available` | `tools/reports.ts` | `/signups/report/available/{signupId}` | **key only** | read |
+| `signupgenius_get_public_signup` | `tools/public-signup.ts` | `GET /go/<slug>` HTML (direct `fetch`, bypasses client) | no auth | read |
+| `signupgenius_rsvp` | `tools/rsvp.ts` | `s.PreProcessSignup` → `SUGboxAPI.cfm?go=s.getSignupInfo` → `s.processSignUpFormHandler` | session only | **write** |
 
 ### RSVP flow notes
 
@@ -65,6 +132,21 @@ Auth resolution lives in `src/auth.ts` (Pattern A template — see "Auth resolut
 3. `POST /SUGboxAPI.cfm?go=s.processSignUpFormHandler` with the payload built by `buildRsvpPayload`.
 
 **Slot-based sign-ups are explicitly rejected** by `signupgenius_rsvp` — they need `type:"standard"` + an `items` array + a separate `s.getSignUpFormItems` call. That's a different tool, not implemented yet.
+
+## Quirks
+
+- **Deferred config (`src/index.ts` + `client.ts`).** Missing/partial creds do NOT crash the server. `resolveAuth()`'s error is stashed in `configError`; the server boots, lists tools, and only re-raises the error when a tool actually calls `SignUpGeniusClient.requireAccount()`. This is required for the host's install-time smoke test. Don't "fix" it by throwing at startup.
+- **Pro-only report tools.** `report_all`/`report_filled`/`report_available` call `client.requireMode('key', …)` and throw `ModeMismatchError` (pointing at `SIGNUPGENIUS_USER_KEY`) in session/fetchproxy mode. They still *register* in every mode so Claude knows they exist — only the invocation fails. The v3 web API has no report equivalent (none was found during recon).
+- **RSVP-only vs slot-based.** `signupgenius_rsvp` handles *only* headcount RSVP sheets (`useRSVP === 1`). It rejects non-RSVP sheets and item-based RSVPs ("Yes, I'll bring lasagna", `rsvpdetails.rsvpitems` non-empty) with actionable errors. Slot-based "claim the 3pm slot" sheets are a separate, unimplemented tool.
+- **`changemembermame` typo is load-bearing.** The RSVP wire payload preserves SignUpGenius's own misspelling. `RSVPITEMS` must always be emitted (as `[]` on headcount sheets) or the CFML `structKeyExists` validator throws `key [RSVPITEMS] doesn't exist`. Response `n` forces both guest counts to 0 regardless of input; `y`/`m` default to 1 adult / 0 children. See `buildRsvpPayload`.
+- **fetchproxy is a one-shot bootstrap, not a hot-path proxy.** `@fetchproxy/bootstrap` reads `accessToken`/`MTOKEN` + `cfid`/`cftoken` cookies once at startup, then closes the bridge; every subsequent call is plain Node `fetch()` with those cookies. `accessToken` and `MTOKEN` carry the same JWT (`accessToken` preferred). On a 401 in fetchproxy mode the synthesized account has empty email/password, so the client *can't* re-login — it surfaces the expiry verbatim ("re-sign-in in the browser") rather than looping.
+- **Two expiry signals.** `isSessionExpired` treats both a `401` and a `200` that renders the legacy HTML login page (matching `loginform`/`loginemail`/`go=c.Login`) as expiry → forces one re-login + replay. A `403` is a Pro-permission failure, not expiry, and is left alone.
+- **Two envelope shapes.** The v2/v3 JSON API returns lower-case `{data, message, success}`; the legacy `/SUGboxAPI.cfm` dispatcher returns upper-case `{DATA, MESSAGE, SUCCESS}`. `normalizeKeyShape` / `normalizeLegacyShape` reconcile them so tools always see `ApiResponse<T>`.
+- **public-signup bypasses the client.** It scrapes server-rendered `/go/` HTML via `globalThis.fetch` (injectable for tests) and regex-extracts landmarks — there's no JSON surface for it. That's why it needs no auth and survives a deferred config error.
+- **100% coverage is enforced.** `vitest.config.ts` requires 100% lines/branches/functions/statements on `src/**` (excluding `src/index.ts`). Any new branch needs a test or CI fails — write the failing test first.
+- **stdio transport: stderr only.** stdout is reserved for JSON-RPC; the startup banner and all logging go to stderr, and `.env` is loaded via `loadDotenvSafely` (quiet) so it can't corrupt the stream.
+- **ESM + NodeNext.** Imports use `.js` extensions even for `.ts` sources.
+- **`bin` vs bundle.** `package.json`'s `bin` points at `dist/index.js` (tsc output); `manifest.json` (the MCPB bundle) runs `dist/bundle.js` (single-file esbuild). `npm run build` produces both. `dist/` is gitignored; CI rebuilds it and the published tarball ships it.
 
 ## Conventions
 
