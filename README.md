@@ -1,5 +1,9 @@
 # signupgenius-mcp
 
+[![CI](https://github.com/chrischall/signupgenius-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/chrischall/signupgenius-mcp/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/signupgenius-mcp)](https://www.npmjs.com/package/signupgenius-mcp)
+[![license](https://img.shields.io/npm/l/signupgenius-mcp)](LICENSE)
+
 MCP server for [SignUpGenius](https://www.signupgenius.com). 13 read tools and 1 write across profile, groups, sign-ups, and reports.
 
 Three auth modes (tried in this priority order — first match wins):
