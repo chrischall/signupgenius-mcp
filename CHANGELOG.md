@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.4](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.3...v1.1.4) (2026-06-13)
+
+
+### Bug Fixes
+
+* bot PRs bypass the CI gate unconditionally (upstream curtaincall[#86](https://github.com/chrischall/signupgenius-mcp/issues/86) review) ([#59](https://github.com/chrischall/signupgenius-mcp/issues/59)) ([8372a93](https://github.com/chrischall/signupgenius-mcp/commit/8372a93df6ed9915c50ac98fa35ff583d4451beb))
+
+
+### Documentation
+
+* add MIT LICENSE file and README badges ([#56](https://github.com/chrischall/signupgenius-mcp/issues/56)) ([a212868](https://github.com/chrischall/signupgenius-mcp/commit/a21286815862e3f175437eb506eb2554dc912c9a))
+
 ## [1.1.3](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.2...v1.1.3) (2026-06-10)
 
 
