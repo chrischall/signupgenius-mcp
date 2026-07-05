@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.5](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.4...v1.1.5) (2026-06-29)
+
+
+### Documentation
+
+* document auto-review follow-up convention ([#65](https://github.com/chrischall/signupgenius-mcp/issues/65)) ([f0e0457](https://github.com/chrischall/signupgenius-mcp/commit/f0e04578d9575ee036a18e98b99f5def54c61efd))
+* require Conventional Commit PR titles for release-please ([#63](https://github.com/chrischall/signupgenius-mcp/issues/63)) ([8d41666](https://github.com/chrischall/signupgenius-mcp/commit/8d416664b8b114c73850c5777b0cd9e0dec95e20))
+
 ## [1.1.4](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.3...v1.1.4) (2026-06-13)
 
 
