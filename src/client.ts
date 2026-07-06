@@ -1,5 +1,10 @@
+import { McpToolError, ModeMismatchError, UnreachableError } from '@chrischall/mcp-utils';
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import type { Account } from './config.js';
+
+// Re-exported so tools/tests keep importing the error types from the client
+// module (the shared classes live in @chrischall/mcp-utils since 0.10.x).
+export { ModeMismatchError, UnreachableError };
 import { sessionLogin as defaultSessionLogin } from './auth-session-login.js';
 
 export type SessionLoginFn = typeof defaultSessionLogin;
@@ -317,7 +322,7 @@ async function parseEnvelope<T>(
 
   if (res.status === 401 || res.status === 403) throw new AuthError(res.status, msg);
   if (res.status === 404) throw new Error(`SignUpGenius 404 ${context}`);
-  if (res.status >= 500) throw new UnreachableError(res.status);
+  if (res.status >= 500) throw new UnreachableError('SignUpGenius', res.status);
   if (!res.ok) throw new Error(`SignUpGenius ${res.status} ${msg || res.statusText} for ${context}`);
 
   if (!parsed) {
@@ -338,37 +343,24 @@ function parseJsonBody<T>(text: string): T | null {
   }
 }
 
-export class AuthError extends Error {
-  constructor(public status: number, detail?: string) {
+/**
+ * SignUpGenius rejected a request (401/403). Kept as a local class (rather
+ * than the shared `SessionNotAuthenticatedError`, whose fixed browser-sign-in
+ * message can't carry it) because the remediation is mode-dependent SUG
+ * guidance — surfaced as the `hint` per the `McpToolError` contract.
+ */
+export class AuthError extends McpToolError {
+  private static readonly HINT =
+    'For key mode: check SIGNUPGENIUS_USER_KEY (it may be wrong, revoked, or the account no longer has Pro). ' +
+    'For session mode: the session cookie may have been invalidated server-side.';
+
+  constructor(readonly status: number, detail?: string) {
     super(
       `SignUpGenius rejected the request (${status}). ` +
-        'For key mode: check SIGNUPGENIUS_USER_KEY (it may be wrong, revoked, or the account no longer has Pro). ' +
-        'For session mode: the session cookie may have been invalidated server-side.' +
+        AuthError.HINT +
         (detail ? ` (${detail})` : ''),
+      { hint: AuthError.HINT },
     );
     this.name = 'AuthError';
-  }
-}
-
-export class UnreachableError extends Error {
-  constructor(public status: number) {
-    super(`SignUpGenius unreachable (status ${status})`);
-    this.name = 'UnreachableError';
-  }
-}
-
-export class ModeMismatchError extends Error {
-  constructor(
-    public currentMode: Account['mode'],
-    public requiredMode: Account['mode'],
-    public feature: string,
-  ) {
-    super(
-      `${feature} requires ${requiredMode} mode but the server is running in ${currentMode} mode. ` +
-        (requiredMode === 'key'
-          ? 'Set SIGNUPGENIUS_USER_KEY (Pro subscription required for the documented v2/k API).'
-          : 'Set SIGNUPGENIUS_EMAIL + SIGNUPGENIUS_PASSWORD to enable this tool.'),
-    );
-    this.name = 'ModeMismatchError';
   }
 }

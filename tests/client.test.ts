@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { McpToolError } from '@chrischall/mcp-utils';
 import { SignUpGeniusClient, AuthError, UnreachableError, ModeMismatchError } from '../src/client.js';
 import type { KeyAccount, SessionAccount } from '../src/config.js';
 
@@ -67,10 +68,15 @@ describe('SignUpGeniusClient — key mode', () => {
     expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
   });
 
-  it('throws AuthError on 403', async () => {
+  it('throws AuthError on 403 (an McpToolError carrying the key/session guidance as hint)', async () => {
     mockFetch({ status: 403, body: { data: null, message: ['bad key'], success: false } });
     const client = new SignUpGeniusClient(keyAccount);
-    await expect(client.request('/x')).rejects.toBeInstanceOf(AuthError);
+    const err = await client.request('/x').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AuthError);
+    expect(err).toBeInstanceOf(McpToolError);
+    expect((err as AuthError).status).toBe(403);
+    expect((err as AuthError).hint).toMatch(/check SIGNUPGENIUS_USER_KEY/);
+    expect((err as AuthError).hint).toMatch(/session cookie may have been invalidated/);
   });
 
   it('AuthError omits the optional upstream-message suffix when no message is provided', async () => {
@@ -93,10 +99,13 @@ describe('SignUpGeniusClient — key mode', () => {
     await expect(client.request('/missing')).rejects.toThrow(/SignUpGenius 404 \/missing/);
   });
 
-  it('throws UnreachableError on 5xx', async () => {
+  it('throws UnreachableError on 5xx (shared template: names the service, carries the status)', async () => {
     mockFetch({ status: 502, rawBody: '' });
     const client = new SignUpGeniusClient(keyAccount);
-    await expect(client.request('/x')).rejects.toBeInstanceOf(UnreachableError);
+    const err = await client.request('/x').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnreachableError);
+    expect((err as UnreachableError).status).toBe(502);
+    expect((err as UnreachableError).message).toMatch(/SignUpGenius unreachable \(status 502\)/);
   });
 
   it('throws on a generic 4xx with message', async () => {
@@ -474,14 +483,18 @@ describe('SignUpGeniusClient — degraded mode (no account configured)', () => {
   });
 });
 
-describe('ModeMismatchError messaging', () => {
-  it('directs to user_key when key mode is required', () => {
+describe('ModeMismatchError messaging (shared mcp-utils template)', () => {
+  it('names the feature and both modes when key mode is required', () => {
     const err = new ModeMismatchError('session', 'key', 'Pro reports');
-    expect(err.message).toMatch(/Set SIGNUPGENIUS_USER_KEY/);
+    expect(err.message).toMatch(/Pro reports requires key mode but the server is running in session mode/);
+    expect(err.hint).toBe('Switch to key mode to use Pro reports.');
   });
 
-  it('directs to email/password when session mode is required', () => {
+  it('carries the modes and feature as readonly fields', () => {
     const err = new ModeMismatchError('key', 'session', 'Add group member');
-    expect(err.message).toMatch(/Set SIGNUPGENIUS_EMAIL \+ SIGNUPGENIUS_PASSWORD/);
+    expect(err.currentMode).toBe('key');
+    expect(err.requiredMode).toBe('session');
+    expect(err.feature).toBe('Add group member');
+    expect(err.message).toMatch(/requires session mode but the server is running in key mode/);
   });
 });

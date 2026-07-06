@@ -81,7 +81,9 @@ src/
                           #   LoginFailedError on a c.Register failure-redirect (bad creds / SSO / 2FA unsupported).
   client.ts               # SignUpGeniusClient: request() routing (key=query user_key vs session=legacy SUGboxAPI),
                           #   CookieSessionManager for lazy login + 401/HTML-login expiry replay, preProcessSignUp(),
-                          #   requireMode(), envelope normalizers. Error types: AuthError, UnreachableError, ModeMismatchError.
+                          #   requireMode(), envelope normalizers. Error types: local AuthError (extends McpToolError,
+                          #   SUG key/session guidance as hint); UnreachableError + ModeMismatchError re-exported
+                          #   from @chrischall/mcp-utils.
   tools/
     _shared.ts            # textContent() = textResult from @chrischall/mcp-utils (the standard MCP text block)
     user.ts               # registerUserTools — signupgenius_get_profile
@@ -136,7 +138,7 @@ Endpoint paths below are mode-dependent: key mode hits `/v2/k/...` (with `user_k
 ## Quirks
 
 - **Deferred config (`src/index.ts` + `client.ts`).** Missing/partial creds do NOT crash the server. `resolveAuth()`'s error is stashed in `configError`; the server boots, lists tools, and only re-raises the error when a tool actually calls `SignUpGeniusClient.requireAccount()`. This is required for the host's install-time smoke test. Don't "fix" it by throwing at startup.
-- **Pro-only report tools.** `report_all`/`report_filled`/`report_available` call `client.requireMode('key', …)` and throw `ModeMismatchError` (pointing at `SIGNUPGENIUS_USER_KEY`) in session/fetchproxy mode. They still *register* in every mode so Claude knows they exist — only the invocation fails. The v3 web API has no report equivalent (none was found during recon).
+- **Pro-only report tools.** `report_all`/`report_filled`/`report_available` call `client.requireMode('key', …)` and throw the shared `ModeMismatchError` (from `@chrischall/mcp-utils`, naming the required vs. current mode) in session/fetchproxy mode. They still *register* in every mode so Claude knows they exist — only the invocation fails. The v3 web API has no report equivalent (none was found during recon).
 - **RSVP-only vs slot-based.** `signupgenius_rsvp` handles *only* headcount RSVP sheets (`useRSVP === 1`). It rejects non-RSVP sheets and item-based RSVPs ("Yes, I'll bring lasagna", `rsvpdetails.rsvpitems` non-empty) with actionable errors. Slot-based "claim the 3pm slot" sheets are a separate, unimplemented tool.
 - **`changemembermame` typo is load-bearing.** The RSVP wire payload preserves SignUpGenius's own misspelling. `RSVPITEMS` must always be emitted (as `[]` on headcount sheets) or the CFML `structKeyExists` validator throws `key [RSVPITEMS] doesn't exist`. Response `n` forces both guest counts to 0 regardless of input; `y`/`m` default to 1 adult / 0 children. See `buildRsvpPayload`.
 - **fetchproxy is a one-shot bootstrap, not a hot-path proxy.** `@fetchproxy/bootstrap` reads `accessToken`/`MTOKEN` + `cfid`/`cftoken` cookies once at startup, then closes the bridge; every subsequent call is plain Node `fetch()` with those cookies. `accessToken` and `MTOKEN` carry the same JWT (`accessToken` preferred). On a 401 in fetchproxy mode the synthesized account has empty email/password, so the client *can't* re-login — it surfaces the expiry verbatim ("re-sign-in in the browser") rather than looping.
