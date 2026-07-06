@@ -11,8 +11,9 @@ const reportArgs = z.object({
  * Report endpoints are Pro-only. The session-mode v3 web API has no
  * equivalent — only the sign-up owner can pull report data, and the v3 paths
  * for it were not discovered during recon. We still register the tools so
- * Claude knows they exist, but in session mode they fail fast with a
- * ModeMismatchError pointing the user at SIGNUPGENIUS_USER_KEY.
+ * Claude knows they exist, but in session mode they fail fast with the shared
+ * ModeMismatchError, whose hint says "Switch to key mode to use {tool}." —
+ * the SIGNUPGENIUS_USER_KEY pointer lives in each tool's description below.
  */
 export function registerReportTools(server: McpServer, client: SignUpGeniusClient): void {
   const register = (toolName: string, path: string, blurb: string) => {

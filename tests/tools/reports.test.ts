@@ -25,8 +25,12 @@ describe.each(cases)('key mode: %s', (toolName, path) => {
 });
 
 describe.each(cases.map(([t]) => t))('session mode rejection: %s', (toolName) => {
-  it('throws ModeMismatchError pointing the user at SIGNUPGENIUS_USER_KEY', async () => {
+  it('throws ModeMismatchError hinting the user to switch to key mode', async () => {
     const { handlers } = setupTools(registerReportTools, sessionAccount);
-    await expect(handlers.get(toolName)!({ signupId: 1 })).rejects.toBeInstanceOf(ModeMismatchError);
+    const invoke = () => handlers.get(toolName)!({ signupId: 1 });
+    await expect(invoke()).rejects.toBeInstanceOf(ModeMismatchError);
+    await expect(invoke()).rejects.toMatchObject({
+      hint: `Switch to key mode to use ${toolName}.`,
+    });
   });
 });
