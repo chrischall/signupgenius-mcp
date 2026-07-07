@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.6](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.5...v1.1.6) (2026-07-07)
+
+
+### Bug Fixes
+
+* bump @chrischall/mcp-utils to 0.12.0 ([#80](https://github.com/chrischall/signupgenius-mcp/issues/80)) ([b3c9461](https://github.com/chrischall/signupgenius-mcp/commit/b3c9461b56911723923fc29a0664f700c2f0e390))
+
+
+### Refactor
+
+* adopt shared error classes from mcp-utils ([#72](https://github.com/chrischall/signupgenius-mcp/issues/72)) ([9d7e456](https://github.com/chrischall/signupgenius-mcp/commit/9d7e4566fe5b93d7cbe80928b25efca4637fab26))
+
+
+### Documentation
+
+* fix stale ModeMismatchError comments after shared-error migration ([#75](https://github.com/chrischall/signupgenius-mcp/issues/75)) ([ee27240](https://github.com/chrischall/signupgenius-mcp/commit/ee2724033ca007cb1b54a391607f2609eedbf2b8))
+
 ## [1.1.5](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.4...v1.1.5) (2026-06-29)
 
 
