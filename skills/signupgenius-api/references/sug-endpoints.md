@@ -136,7 +136,7 @@ sheet, unsupported by this flow):
 curl -s -X POST 'https://www.signupgenius.com/SUGboxAPI.cfm?go=s.getSignupInfo' \
   -H "Authorization: Bearer $ACCESS_TOKEN" -H "Cookie: $COOKIE_HEADER" \
   -H 'Content-Type: application/json' \
-  -d "{\"urlid\":\"${URLID}\"}" | tee /tmp/sug-signupinfo.json | jq '{useRSVP, owner, id, title, slotid: .rsvpdetails.slotid}'
+  -d "{\"urlid\":\"${URLID}\"}" | tee /tmp/sug-signupinfo.json | jq '.DATA | {useRSVP, owner, id, title, slotid: .rsvpdetails.slotid}'
 ```
 
 **Step 3 — processSignUpFormHandler** (the actual RSVP submit). `RSVPITEMS`
@@ -155,7 +155,7 @@ SLOTID=$(jq -r '.DATA.rsvpdetails.slotid' /tmp/sug-signupinfo.json)
 curl -s -X POST 'https://www.signupgenius.com/SUGboxAPI.cfm?go=s.processSignUpFormHandler' \
   -H "Authorization: Bearer $ACCESS_TOKEN" -H "Cookie: $COOKIE_HEADER" \
   -H 'Content-Type: application/json' \
-  -d @- <<JSON | jq '.success, .message'
+  -d @- <<JSON | jq '.SUCCESS, .MESSAGE'
 {
   "listid": ${LISTID},
   "owner": ${OWNER},
