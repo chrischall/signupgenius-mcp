@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.6...v1.2.0) (2026-07-13)
+
+
+### Features
+
+* **skill:** add signupgenius api access skill ([#82](https://github.com/chrischall/signupgenius-mcp/issues/82)) ([628670e](https://github.com/chrischall/signupgenius-mcp/commit/628670e79360423a43a0d0df6745b316e28afd5d))
+
+
+### Refactor
+
+* **skill:** move root SKILL.md into skills/, point plugin.json at ./skills/ ([#84](https://github.com/chrischall/signupgenius-mcp/issues/84)) ([16c1352](https://github.com/chrischall/signupgenius-mcp/commit/16c135212de9e6271b3d16b7110b2bc8e84154c7))
+
 ## [1.1.6](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.5...v1.1.6) (2026-07-07)
 
 

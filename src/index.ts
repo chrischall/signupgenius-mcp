@@ -57,7 +57,7 @@ bannerLines.push(
 
 await runMcp({
   name: 'signupgenius',
-  version: '1.1.6', // x-release-please-version
+  version: '1.2.0', // x-release-please-version
   banner: bannerLines.join('\n'),
   deps: client,
   tools: [
