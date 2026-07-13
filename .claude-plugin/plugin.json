@@ -15,5 +15,6 @@
     "signups",
     "volunteers",
     "mcp"
-  ]
+  ],
+  "skills": "./skills/"
 }
