@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/chrischall/signupgenius-mcp/compare/v1.2.0...v1.2.1) (2026-07-19)
+
+
+### Documentation
+
+* replace duplicated fleet policy with a pointer ([#89](https://github.com/chrischall/signupgenius-mcp/issues/89)) ([8ccc8e0](https://github.com/chrischall/signupgenius-mcp/commit/8ccc8e085515716decb25da24273a1dd24a0659f))
+
 ## [1.2.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.1.6...v1.2.0) (2026-07-13)
 
 
