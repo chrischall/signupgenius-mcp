@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/chrischall/signupgenius-mcp/compare/v1.2.1...v1.2.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **deps:** bump @fetchproxy/* to 1.7.0 and @chrischall/mcp-utils to 0.14.0 ([#100](https://github.com/chrischall/signupgenius-mcp/issues/100)) ([053f8fa](https://github.com/chrischall/signupgenius-mcp/commit/053f8fa8e81735d00a36630066b0e3e026a52add))
+
 ## [1.2.1](https://github.com/chrischall/signupgenius-mcp/compare/v1.2.0...v1.2.1) (2026-07-19)
 
 
