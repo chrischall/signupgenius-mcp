@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { McpToolError } from '@chrischall/mcp-utils';
-import { SignUpGeniusClient, AuthError, UnreachableError, ModeMismatchError } from '../src/client.js';
+import {
+  SignUpGeniusClient,
+  AuthError,
+  UnreachableError,
+  ModeMismatchError,
+  KeyModeRequiredError,
+} from '../src/client.js';
 import type { KeyAccount, SessionAccount } from '../src/config.js';
 
 const keyAccount: KeyAccount = {
@@ -391,6 +397,54 @@ describe('SignUpGeniusClient — session expiry detection (status + 200 legacy-H
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  // The legacy /SUGboxAPI.cfm dispatcher has a THIRD expiry shape that neither
+  // the 401 nor the HTML-login-page check catches: a 200 with a well-formed
+  // JSON envelope whose SUCCESS is false and whose MESSAGE says the session is
+  // gone. Observed live when the ColdFusion cfid/cftoken pair is absent or
+  // stale — the JWT alone is not enough for this dispatcher.
+  const LOGGED_OUT_JSON = JSON.stringify({
+    SUCCESS: false,
+    MESSAGE: [
+      'There was a problem executing this page. You are no longer logged in. Please login and attempt again.',
+    ],
+    DATA: {},
+  });
+
+  it('treats a 200 JSON "no longer logged in" envelope as expiry: re-logs-in and replays', async () => {
+    const fetchSpy = mockResponses(
+      new Response(LOGGED_OUT_JSON, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+      new Response(JSON.stringify({ DATA: { signups: [] }, MESSAGE: [], SUCCESS: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const client = newClient();
+    const result = await client.request('', { legacyAction: 't.getMySignups' });
+    expect(result.success).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fakeLogin).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT treat an ordinary JSON SUCCESS:false as expiry (no re-login)', async () => {
+    // Only the "no longer logged in" wording is an expiry signal. Every other
+    // dispatcher error must surface as-is, or a genuine application error would
+    // burn a pointless re-login and mask itself.
+    mockResponses(
+      new Response(
+        JSON.stringify({ SUCCESS: false, MESSAGE: ['Invalid Request'], DATA: {} }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    const client = newClient();
+    await expect(client.request('', { legacyAction: 's.getSignUpFormItems' })).rejects.toThrow(
+      /Invalid Request/,
+    );
+    expect(fakeLogin).toHaveBeenCalledTimes(1);
+  });
+
   it('does NOT treat an unrelated html 200 as expiry — surfaces a parse error, no re-login', async () => {
     mockResponses(
       new Response('<html><body>maintenance</body></html>', {
@@ -412,37 +466,106 @@ describe('SignUpGeniusClient — session expiry detection (status + 200 legacy-H
   });
 });
 
-describe('SignUpGeniusClient — fetchproxy-preloaded session', () => {
-  // The fetchproxy auth path hands the client a pre-loaded JWT + cookie
-  // header and a session account with empty email/password. The client
-  // should (a) skip the lazy form-login entirely, (b) attach the supplied
-  // credentials to every request, and (c) on a 401, NOT loop trying to
-  // re-login (there are no credentials to re-login with — re-sign-in
-  // happens in the browser).
+describe('SignUpGeniusClient — fetchproxy session (lazy lift + renewal)', () => {
+  // The fetchproxy auth path hands the client a `refreshSession` function and
+  // a session account with empty email/password. The client should (a) not
+  // call it until the first request, (b) attach what it returns to every
+  // request, and (c) call it AGAIN on expiry — the renewal that keeps the path
+  // alive past the JWT's 30-minute TTL.
   const fakeLogin = vi.fn();
   const fpAccount: SessionAccount = { ...sessionAccount, email: '', password: '' };
 
   afterEach(() => fakeLogin.mockClear());
 
-  it('uses the preloaded JWT/cookies on the very first request — no sessionLogin call', async () => {
+  it('does not lift the browser session until the first request', async () => {
+    const refreshSession = vi.fn(async () => ({
+      accessToken: 'jwt-from-browser',
+      cookieHeader: 'accessToken=jwt-from-browser',
+    }));
     const fetchSpy = mockFetch(ok({ ok: true }));
-    const client = new SignUpGeniusClient(fpAccount, {
-      sessionLogin: fakeLogin,
-      preloaded: { accessToken: 'jwt-from-browser', cookieHeader: 'accessToken=jwt-from-browser; cfid=x; cftoken=y' },
-    });
+    const client = new SignUpGeniusClient(fpAccount, { sessionLogin: fakeLogin, refreshSession });
+    expect(refreshSession).not.toHaveBeenCalled();
     await client.request('/anything');
+    expect(refreshSession).toHaveBeenCalledTimes(1);
     expect(fakeLogin).not.toHaveBeenCalled();
     const headers = (fetchSpy.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer jwt-from-browser');
+  });
+
+  it('attaches the lifted cookie header verbatim (cfid/cftoken included)', async () => {
+    const refreshSession = vi.fn(async () => ({
+      accessToken: 'jwt-from-browser',
+      cookieHeader: 'accessToken=jwt-from-browser; cfid=x; cftoken=y',
+    }));
+    const fetchSpy = mockFetch(ok({ ok: true }));
+    const client = new SignUpGeniusClient(fpAccount, { sessionLogin: fakeLogin, refreshSession });
+    await client.request('/anything');
+    const headers = (fetchSpy.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
     expect(headers.Cookie).toBe('accessToken=jwt-from-browser; cfid=x; cftoken=y');
   });
 
-  it('does NOT retry on 401 when email/password are empty (re-sign-in happens in the browser)', async () => {
+  // THE fix for the 30-minute cliff. Previously the browser session was
+  // captured once at startup and a 401 surfaced verbatim, because there were
+  // no credentials to re-login with. Now expiry re-reads the browser, which
+  // has a live session, and the request is replayed with the fresh JWT.
+  it('re-lifts the browser session on a 401 and replays the request once', async () => {
+    const refreshSession = vi
+      .fn<() => Promise<{ accessToken: string; cookieHeader: string }>>()
+      .mockResolvedValueOnce({ accessToken: 'stale-jwt', cookieHeader: 'accessToken=stale-jwt' })
+      .mockResolvedValueOnce({ accessToken: 'fresh-jwt', cookieHeader: 'accessToken=fresh-jwt' });
+    const fetchSpy = mockFetch({ status: 401, rawBody: '' }, ok({ ok: true }));
+    const client = new SignUpGeniusClient(fpAccount, { sessionLogin: fakeLogin, refreshSession });
+    const result = await client.request<{ ok: boolean }>('/x');
+    expect(result.data).toEqual({ ok: true });
+    expect(refreshSession).toHaveBeenCalledTimes(2);
+    const retryHeaders = (fetchSpy.mock.calls[1]![1] as RequestInit).headers as Record<string, string>;
+    expect(retryHeaders.Authorization).toBe('Bearer fresh-jwt');
+    expect(fakeLogin).not.toHaveBeenCalled();
+  });
+
+  it('re-lifts on the legacy 200 "no longer logged in" envelope too', async () => {
+    const refreshSession = vi
+      .fn<() => Promise<{ accessToken: string; cookieHeader: string }>>()
+      .mockResolvedValue({ accessToken: 'jwt', cookieHeader: 'accessToken=jwt' });
+    mockFetch(
+      {
+        status: 200,
+        rawBody: JSON.stringify({
+          SUCCESS: false,
+          MESSAGE: ['There was a problem executing this page. You are no longer logged in.'],
+          DATA: {},
+        }),
+      },
+      okLegacy({ signups: [] }),
+    );
+    const client = new SignUpGeniusClient(fpAccount, { sessionLogin: fakeLogin, refreshSession });
+    const result = await client.request('', { legacyAction: 't.getMySignups' });
+    expect(result.success).toBe(true);
+    expect(refreshSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after ONE renewal — a persistently dead browser session does not loop', async () => {
+    const refreshSession = vi
+      .fn<() => Promise<{ accessToken: string; cookieHeader: string }>>()
+      .mockResolvedValue({ accessToken: 'still-dead', cookieHeader: 'accessToken=still-dead' });
     mockFetch({ status: 401, rawBody: '' });
-    const client = new SignUpGeniusClient(fpAccount, {
-      sessionLogin: fakeLogin,
-      preloaded: { accessToken: 'jwt-from-browser', cookieHeader: 'accessToken=jwt-from-browser' },
-    });
+    const client = new SignUpGeniusClient(fpAccount, { sessionLogin: fakeLogin, refreshSession });
+    await expect(client.request('/x')).rejects.toBeInstanceOf(AuthError);
+    expect(refreshSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces a lift failure (signed out / extension down) as the tool error', async () => {
+    const refreshSession = vi
+      .fn<() => Promise<{ accessToken: string; cookieHeader: string }>>()
+      .mockRejectedValue(new Error('accessToken cookie missing on www.signupgenius.com. …retry.'));
+    mockFetch(ok({ ok: true }));
+    const client = new SignUpGeniusClient(fpAccount, { sessionLogin: fakeLogin, refreshSession });
+    await expect(client.request('/x')).rejects.toThrow(/accessToken cookie missing/);
+  });
+
+  it('without a refreshSession and without credentials, a 401 does not loop', async () => {
+    mockFetch({ status: 401, rawBody: '' });
+    const client = new SignUpGeniusClient(fpAccount, { sessionLogin: fakeLogin });
     await expect(client.request('/x')).rejects.toBeInstanceOf(AuthError);
     expect(fakeLogin).not.toHaveBeenCalled();
   });
@@ -480,6 +603,66 @@ describe('SignUpGeniusClient — degraded mode (no account configured)', () => {
   it('requireMode throws the stored configError', () => {
     const client = newDegradedClient();
     expect(() => client.requireMode('key', 'Pro reports')).toThrowError(bootstrapError.message);
+  });
+
+  // requireMode() calls requireAccount() first, so in degraded mode the
+  // configError wins — and that error's remediation ("sign into
+  // signupgenius.com in your browser") can NEVER enable a key-only feature.
+  // requireKeyMode() leads with the requirement that actually applies.
+  it('requireKeyMode leads with the Pro-key requirement, not the browser sign-in advice', () => {
+    const client = newDegradedClient();
+    const err = (() => {
+      try {
+        client.requireKeyMode('signupgenius_report_all');
+        return null;
+      } catch (e) {
+        return e as KeyModeRequiredError;
+      }
+    })();
+    expect(err).toBeInstanceOf(KeyModeRequiredError);
+    expect(err!.message).toMatch(/requires Pro key mode/);
+    expect(err!.message).toMatch(/SIGNUPGENIUS_USER_KEY/);
+    expect(err!.hint).toMatch(/cannot enable this/i);
+    // The underlying config error stays visible — it may itself be a
+    // key-mode misconfiguration (e.g. a bad SIGNUPGENIUS_BASE_URL).
+    expect(err!.message).toContain(bootstrapError.message);
+  });
+
+  it('requireKeyMode omits the config-error suffix when none was stored', () => {
+    const client = new SignUpGeniusClient(null);
+    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(
+      /requires Pro key mode/,
+    );
+    try {
+      client.requireKeyMode('signupgenius_report_all');
+    } catch (e) {
+      expect((e as Error).message).not.toMatch(/auth is also unconfigured/);
+    }
+  });
+});
+
+describe('requireKeyMode with a resolved account', () => {
+  it('passes through in key mode', () => {
+    const client = new SignUpGeniusClient({
+      mode: 'key',
+      name: 'k',
+      baseUrl: 'https://api.signupgenius.com/v2/k',
+      userKey: 'abc',
+    });
+    expect(() => client.requireKeyMode('signupgenius_report_all')).not.toThrow();
+  });
+
+  it('still throws ModeMismatchError in session mode (existing behavior)', () => {
+    const client = new SignUpGeniusClient({
+      mode: 'session',
+      name: 's',
+      baseUrl: 'https://api.signupgenius.com/v3',
+      legacyBaseUrl: 'https://www.signupgenius.com',
+      loginBaseUrl: 'https://www.signupgenius.com',
+      email: 'a@b.c',
+      password: 'pw',
+    });
+    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(ModeMismatchError);
   });
 });
 
