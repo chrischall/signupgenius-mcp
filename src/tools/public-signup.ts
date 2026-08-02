@@ -50,6 +50,8 @@ export interface SignUpDetails {
   time?: string;
   location?: string;
   description: string[];
+  /** og:image — the sheet's banner/creator image, when the page advertises one. */
+  image?: string;
   creator?: string;
   responses?: {
     yes?: number;
@@ -119,6 +121,9 @@ export function extractSignUpDetails(html: string, parts: SignUpUrlParts): SignU
   };
   if (parts.vanity !== undefined) out.vanity = parts.vanity;
 
+  const image = ogTag(html, 'image');
+  if (image) out.image = image;
+
   const organization = textOf(html, /<div class="SUGbold">([\s\S]*?)<\/div>/);
   if (organization) out.organization = organization;
 
@@ -140,15 +145,51 @@ export function extractSignUpDetails(html: string, parts: SignUpUrlParts): SignU
   return out;
 }
 
+/**
+ * Read an Open Graph meta tag.
+ *
+ * The modern `/go/` page is a pure Angular shell: it carries no
+ * `h1.SUGHeaderText`, no slot markup, and a generic `<title>Sign Me Up</title>`
+ * regardless of User-Agent. Its `og:` block is the ONLY place the served HTML
+ * names the actual sheet, so these tags are what keep the tool useful on
+ * current sheets. Handles both attribute orders (`property` before or after
+ * `content`) since the shell emits them inconsistently.
+ */
+function ogTag(html: string, name: string): string | undefined {
+  const patterns = [
+    new RegExp(`<meta[^>]+property=["']og:${name}["'][^>]*content=["']([^"']*)["']`, 'i'),
+    new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*property=["']og:${name}["']`, 'i'),
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1].trim()) return htmlToText(m[1]).trim();
+  }
+  return undefined;
+}
+
 function pickTitle(html: string): string {
+  // Server-rendered h1 wins when a legacy page still provides it; otherwise
+  // og:title, which beats <title> because the shell's <title> is the useless
+  // constant "Sign Me Up".
   const h1 = textOf(html, /<h1 class="SUGHeaderText">([\s\S]*?)<\/h1>/);
   if (h1) return h1;
+  const og = ogTag(html, 'title');
+  if (og) return og;
   const t = textOf(html, /<title>([\s\S]*?)<\/title>/i);
   if (t) return t;
   return 'Untitled sign-up';
 }
 
 function extractDescription(html: string): string[] {
+  const paras = extractParagraphDescription(html);
+  if (paras.length > 0) return paras;
+  // Angular-shell page: no <p> block to scrape. og:description is the only
+  // prose the server actually sends.
+  const og = ogTag(html, 'description');
+  return og ? [og] : [];
+}
+
+function extractParagraphDescription(html: string): string[] {
   const m = html.match(/<h1 class="SUGHeaderText">[\s\S]*?<\/h1>([\s\S]*?)<strong>Date/);
   if (!m) return [];
   const paragraphs: string[] = [];
@@ -225,10 +266,174 @@ function htmlToText(s: string): string {
     .replace(/\s+/g, ' ');
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Slot listing — GET /v3/signups/{id}/slots
+// ────────────────────────────────────────────────────────────────────────────
+//
+// This endpoint is fully UNAUTHENTICATED. Verified 2026-08-02 against sign-up
+// 62393618: the response is byte-identical with and without a valid session,
+// and sending a *bogus* Authorization header returns 500 — so it must be
+// called clean, exactly like the /go/ page fetch above.
+//
+// It is also the only read path for slots on a sheet the user does not own.
+// The Pro `/signups/report/{all,filled,available}` endpoints are both key-only
+// AND owner-scoped, so a Pro key is not a workaround for someone else's sheet.
+// What this endpoint does NOT carry is per-participant identity on
+// `hidenames` slots, or custom-question answers — those stay owner-only.
+
+const SLOTS_BASE = 'https://api.signupgenius.com/v3/signups';
+
+const slotsInput = z.object({
+  url: z
+    .string()
+    .min(1)
+    .describe(
+      'A SignUpGenius sign-up URL, its slug (`<urlid>-<signupid>[-<vanity>]`), ' +
+        'or just the numeric sign-up id.',
+    ),
+});
+
+export interface SlotItemSummary {
+  slot: string;
+  slotid: number;
+  slotitemid: number;
+  starttime: string | null;
+  endtime: string | null;
+  location?: string;
+  limit: number | null;
+  taken: number;
+  remaining: number | null;
+  unlimited: boolean;
+  state?: string;
+  /** True when the OWNER hid participant names — not a permission failure. */
+  hidenames: boolean;
+  /** Present only when the sheet exposes names. */
+  participants?: string[];
+}
+
+interface RawSlotsEnvelope {
+  success?: boolean;
+  message?: string[];
+  data?: { slots?: RawSlot[] };
+}
+interface RawSlot {
+  slotid?: number;
+  title?: string;
+  hidenames?: boolean;
+  slotitems?: RawSlotItem[];
+}
+interface RawSlotItem {
+  slotitemid?: number;
+  quantity?: {
+    limit?: number | null;
+    taken?: number;
+    remaining?: number | null;
+    unlimited?: boolean;
+  };
+  availability?: { state?: string };
+  participants?: { itemmembers?: Array<{ name?: string }> };
+  date?: {
+    starttime?: string | null;
+    endtime?: string | null;
+    location?: { name?: string | null; displaytext?: string | null } | null;
+  } | null;
+}
+
+/** Resolve the numeric sign-up id from a URL, a slug, or a bare id. */
+export function resolveSignUpId(input: string): number {
+  const trimmed = input.trim();
+  if (/^\d+$/.test(trimmed)) return Number(trimmed);
+  return parseSignUpUrl(trimmed).signupid;
+}
+
+/** Flatten the v3 slots envelope into a caller-friendly slot-item list. */
+export function extractSlotItems(raw: RawSlotsEnvelope): SlotItemSummary[] {
+  const out: SlotItemSummary[] = [];
+  for (const slot of raw.data?.slots ?? []) {
+    const hidenames = slot.hidenames === true;
+    for (const item of slot.slotitems ?? []) {
+      const q = item.quantity ?? {};
+      const summary: SlotItemSummary = {
+        slot: slot.title ?? '(untitled slot)',
+        slotid: slot.slotid ?? 0,
+        slotitemid: item.slotitemid ?? 0,
+        starttime: item.date?.starttime ?? null,
+        endtime: item.date?.endtime ?? null,
+        limit: q.limit ?? null,
+        taken: q.taken ?? 0,
+        remaining: q.remaining ?? null,
+        unlimited: q.unlimited === true,
+        hidenames,
+      };
+      const loc = item.date?.location;
+      const locText = loc?.displaytext ?? loc?.name ?? undefined;
+      if (locText) summary.location = locText;
+      if (item.availability?.state) summary.state = item.availability.state;
+      const names = (item.participants?.itemmembers ?? [])
+        .map((m) => m.name)
+        .filter((n): n is string => typeof n === 'string' && n.length > 0);
+      if (names.length > 0) summary.participants = names;
+      out.push(summary);
+    }
+  }
+  return out;
+}
+
 export function registerPublicSignUpTools(
   server: McpServer,
   fetcher: Fetcher = (url) => globalThis.fetch(url),
 ): void {
+  server.registerTool(
+    'signupgenius_get_signup_slots',
+    {
+      description:
+        'List the SLOTS (dates, times, locations, and how many spots are taken/remaining) ' +
+        'for any public SignUpGenius sign-up, given its URL, slug, or numeric id. ' +
+        'Requires NO auth and works for sheets the user did not create — use this ' +
+        'instead of signupgenius_report_* whenever you need slot availability. ' +
+        'Note: participant names are omitted on slots whose creator enabled ' +
+        '"hide names" (reported per-item as `hidenames`).',
+      annotations: { readOnlyHint: true, openWorldHint: true },
+      inputSchema: slotsInput.shape,
+    },
+    async (rawArgs) => {
+      const args = slotsInput.parse(rawArgs);
+      const signupid = resolveSignUpId(args.url);
+      const url = `${SLOTS_BASE}/${signupid}/slots`;
+      // Called with NO second argument on purpose: a bogus Authorization
+      // header makes this endpoint 500, and a valid one changes nothing.
+      const res = await fetcher(url);
+      if (res.status === 404) {
+        throw new Error(
+          `SignUpGenius has no sign-up with id ${signupid} (404). ` +
+            'Check the slug — the id is the middle segment of a /go/ link.',
+        );
+      }
+      if (!res.ok) {
+        throw new Error(`SignUpGenius returned HTTP ${res.status} for ${url}`);
+      }
+      const body = await res.text();
+      let parsed: RawSlotsEnvelope;
+      try {
+        parsed = JSON.parse(body) as RawSlotsEnvelope;
+      } catch {
+        throw new Error(`SignUpGenius returned a non-JSON body for ${url}`);
+      }
+      if (parsed.success !== true) {
+        const msg = (parsed.message ?? []).join('; ');
+        throw new Error(`SignUpGenius error listing slots: ${msg || 'unknown'}`);
+      }
+      const items = extractSlotItems(parsed);
+      return textContent({
+        signupid,
+        source: url,
+        slotCount: items.length,
+        totalRemaining: items.reduce((n, i) => n + (i.remaining ?? 0), 0),
+        items,
+      });
+    },
+  );
+
   server.registerTool(
     'signupgenius_get_public_signup',
     {
