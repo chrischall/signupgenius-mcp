@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## TL;DR
 
-MCP server for SignUpGenius — 14 read tools + 2 write across profile, groups, sign-ups, reports, public sign-up pages, and authenticated RSVPs.
+MCP server for SignUpGenius — 15 read tools + 2 write across profile, groups, sign-ups, reports, public sign-up pages, slot listings, and authenticated RSVPs.
 
 Auth resolution lives in `src/auth.ts` (Pattern A template — see "Auth resolution" below). Three paths, priority order:
 
 1. `SIGNUPGENIUS_USER_KEY` → Pro v2/k key mode (the only mode that can call slot reports).
 2. `SIGNUPGENIUS_EMAIL` + `SIGNUPGENIUS_PASSWORD` → session-login (form POST → JWT + `cfid`/`cftoken` cookies → v3 API + legacy `/SUGboxAPI.cfm`).
-3. fetchproxy fallback → `@fetchproxy/bootstrap` reads `accessToken` (a.k.a. `MTOKEN`) + `cfid` + `cftoken` cookies from the user's signed-in signupgenius.com browser tab. Bootstrap runs once at startup; from then on every API call goes out via direct Node `fetch()` with the cookies attached. Fetchproxy is **not** in the request hot path.
+3. fetchproxy fallback → `@fetchproxy/bootstrap` reads `accessToken` (a.k.a. `MTOKEN`) + `cfid` + `cftoken` + `refreshToken` cookies from the user's signed-in signupgenius.com browser tab, **at the `www` host** (the apex exposes only `accessToken`). The lift runs lazily per login — first request and every expiry — not once at startup, and exchanges a stale JWT via `POST /v3/auth/refresh`. Between lifts every API call goes out via direct Node `fetch()` with the cookies attached. Fetchproxy is **not** in the request hot path.
 
 `SIGNUPGENIUS_DISABLE_FETCHPROXY=1` skips path 3 entirely and turns a missing/partial env config into a hard error at tool-call time — useful for headless CI where the browser bridge can't apply.
 
@@ -89,20 +89,21 @@ src/
     user.ts               # registerUserTools — signupgenius_get_profile
     groups.ts             # registerGroupTools — list_groups, list/get_group_member, add_group_member (write)
     signups.ts            # registerSignUpTools — list_created_{active,expired,all}, list_invited/signedupfor, legacy_get_my_signups
-    reports.ts            # registerReportTools — report_{all,filled,available} (Pro/key-only, requireMode('key'))
-    public-signup.ts      # registerPublicSignUpTools — get_public_signup (no auth; scrapes the /go/ HTML page directly)
+    reports.ts            # registerReportTools — report_{all,filled,available} (Pro/key-only, requireKeyMode())
+    public-signup.ts      # registerPublicSignUpTools — get_public_signup (no auth; scrapes /go/ HTML + og: tags)
+                          #   and get_signup_slots (no auth; GET /v3/signups/{id}/slots)
     rsvp.ts               # registerRsvpTool — signupgenius_rsvp (session-only write; PreProcessSignup→getSignupInfo→submit)
 tests/                    # mirrors src/ (tests/tools/* for tool files). Mocks SignUpGeniusClient.request /
                           #   @fetchproxy/bootstrap / sessionLogin at the module boundary; no network.
 ```
 
-Each `tools/*.ts` exports a `registerXxx…(server, client)` function — `registerXxxTools` (plural) for the multi-tool files, but the single-tool `rsvp.ts` exports `registerRsvpTool` (singular). (public-signup's is `(server, fetcher?)` since it bypasses the client.) `src/index.ts` wires all six. Schemas use the const-zod pattern: `const args = z.object({...})`; the SDK gets `args.shape`, the handler does `args.parse(raw)`.
+Each `tools/*.ts` exports a `registerXxx…(server, client)` function — `registerXxxTools` (plural) for the multi-tool files, but the single-tool `rsvp.ts` exports `registerRsvpTool` (singular). (public-signup's is `(server, fetcher?)` since it bypasses the client; it registers **two** tools — the `/go/` scrape and the v3 slot listing.) `src/index.ts` wires all six. Schemas use the const-zod pattern: `const args = z.object({...})`; the SDK gets `args.shape`, the handler does `args.parse(raw)`.
 
-Registration is mode-aware: `client.mode` (which defaults to `'session'` when config is deferred) chooses key-vs-session endpoint paths, gates the session-only `legacy_get_my_signups` and `signupgenius_rsvp` (skipped entirely outside session mode), while report tools always register but throw `ModeMismatchError` if invoked outside key mode.
+Registration is mode-aware: `client.mode` (which defaults to `'session'` when config is deferred) chooses key-vs-session endpoint paths, gates the session-only `legacy_get_my_signups` and `signupgenius_rsvp` (skipped entirely outside session mode), while report tools always register but throw `ModeMismatchError` / `KeyModeRequiredError` if invoked outside key mode.
 
 ## Tool surface
 
-14 read + 2 write. Pro-only tools (slot reports) call `client.requireMode('key', …)` and throw `ModeMismatchError` in session/fetchproxy mode. The public-signup tool needs no auth and works even when `resolveAuth()` has deferred a config error.
+15 read + 2 write. Pro-only tools (slot reports) call `client.requireKeyMode(…)` and throw `ModeMismatchError` (or `KeyModeRequiredError` when config was deferred) in session/fetchproxy mode. The public-signup tool needs no auth and works even when `resolveAuth()` has deferred a config error.
 
 Endpoint paths below are mode-dependent: key mode hits `/v2/k/...` (with `user_key` in the query string), session mode hits `/v3/...` or the legacy `/SUGboxAPI.cfm?go=<action>` dispatcher.
 
@@ -123,6 +124,7 @@ Endpoint paths below are mode-dependent: key mode hits `/v2/k/...` (with `user_k
 | `signupgenius_report_filled` | `tools/reports.ts` | `/signups/report/filled/{signupId}` | **key only** | read |
 | `signupgenius_report_available` | `tools/reports.ts` | `/signups/report/available/{signupId}` | **key only** | read |
 | `signupgenius_get_public_signup` | `tools/public-signup.ts` | `GET /go/<slug>` HTML (direct `fetch`, bypasses client) | no auth | read |
+| `signupgenius_get_signup_slots` | `tools/public-signup.ts` | `GET /v3/signups/{id}/slots` (direct `fetch`, bypasses client) | no auth | read |
 | `signupgenius_rsvp` | `tools/rsvp.ts` | `s.PreProcessSignup` → `SUGboxAPI.cfm?go=s.getSignupInfo` → `s.processSignUpFormHandler` | session only | **write** |
 
 ### RSVP flow notes
@@ -133,18 +135,22 @@ Endpoint paths below are mode-dependent: key mode hits `/v2/k/...` (with `user_k
 2. `POST /SUGboxAPI.cfm?go=s.getSignupInfo` with `{ urlid }` — returns the full sign-up envelope. Used to gate on `useRSVP === 1` and pull `rsvpdetails.slotid`.
 3. `POST /SUGboxAPI.cfm?go=s.processSignUpFormHandler` with the payload built by `buildRsvpPayload`.
 
-**Slot-based sign-ups are explicitly rejected** by `signupgenius_rsvp` — they need `type:"standard"` + an `items` array + a separate `s.getSignUpFormItems` call. That's a different tool, not implemented yet.
+**Slot-based sign-ups are explicitly rejected** by `signupgenius_rsvp` — they need `type:"standard"` + an `items` array + a separate `s.getSignUpFormItems` call. Signing UP for a slot is still unimplemented; *reading* slots is covered by `signupgenius_get_signup_slots`.
 
 ## Quirks
 
 - **Deferred config (`src/index.ts` + `client.ts`).** Missing/partial creds do NOT crash the server. `resolveAuth()`'s error is stashed in `configError`; the server boots, lists tools, and only re-raises the error when a tool actually calls `SignUpGeniusClient.requireAccount()`. This is required for the host's install-time smoke test. Don't "fix" it by throwing at startup.
-- **Pro-only report tools.** `report_all`/`report_filled`/`report_available` call `client.requireMode('key', …)` and throw the shared `ModeMismatchError` (from `@chrischall/mcp-utils`, naming the required vs. current mode) in session/fetchproxy mode. They still *register* in every mode so Claude knows they exist — only the invocation fails. The v3 web API has no report equivalent (none was found during recon).
-- **RSVP-only vs slot-based.** `signupgenius_rsvp` handles *only* headcount RSVP sheets (`useRSVP === 1`). It rejects non-RSVP sheets and item-based RSVPs ("Yes, I'll bring lasagna", `rsvpdetails.rsvpitems` non-empty) with actionable errors. Slot-based "claim the 3pm slot" sheets are a separate, unimplemented tool.
+- **Pro-only report tools.** `report_all`/`report_filled`/`report_available` call `client.requireKeyMode(…)`, which checks the mode BEFORE `requireAccount()`. That ordering matters: plain `requireMode` re-raises the deferred `configError` first, and that error tells the user to sign into the browser — advice that can never enable a key-only endpoint. With a resolved account they throw the shared `ModeMismatchError`; with config deferred they throw `KeyModeRequiredError`, which leads with the Pro-key requirement and appends the config error. These reports are also owner-scoped, so a Pro key is not a workaround for someone else's sheet — use `signupgenius_get_signup_slots`. They still *register* in every mode so Claude knows they exist — only the invocation fails. The v3 web API has no report equivalent (none was found during recon).
+- **RSVP-only vs slot-based.** `signupgenius_rsvp` handles *only* headcount RSVP sheets (`useRSVP === 1`). It rejects non-RSVP sheets and item-based RSVPs ("Yes, I'll bring lasagna", `rsvpdetails.rsvpitems` non-empty) with actionable errors. *Writing* to slot-based "claim the 3pm slot" sheets is still unimplemented; *reading* them works via `signupgenius_get_signup_slots`.
 - **`changemembermame` typo is load-bearing.** The RSVP wire payload preserves SignUpGenius's own misspelling. `RSVPITEMS` must always be emitted (as `[]` on headcount sheets) or the CFML `structKeyExists` validator throws `key [RSVPITEMS] doesn't exist`. Response `n` forces both guest counts to 0 regardless of input; `y`/`m` default to 1 adult / 0 children. See `buildRsvpPayload`.
-- **fetchproxy is a one-shot bootstrap, not a hot-path proxy.** `@fetchproxy/bootstrap` reads `accessToken`/`MTOKEN` + `cfid`/`cftoken` cookies once at startup, then closes the bridge; every subsequent call is plain Node `fetch()` with those cookies. `accessToken` and `MTOKEN` carry the same JWT (`accessToken` preferred). On a 401 in fetchproxy mode the synthesized account has empty email/password, so the client *can't* re-login — it surfaces the expiry verbatim ("re-sign-in in the browser") rather than looping.
-- **Two expiry signals.** `isSessionExpired` treats both a `401` and a `200` that renders the legacy HTML login page (matching `loginform`/`loginemail`/`go=c.Login`) as expiry → forces one re-login + replay. A `403` is a Pro-permission failure, not expiry, and is left alone.
+- **Two independent session lifetimes.** The JWT (`accessToken`) and the ColdFusion session (`cfid`/`cftoken`) expire on *separate* clocks. The JWT lives 30 minutes and is renewable via `refreshToken`; the CF session lapses on its own idle timer and is only re-established by a real login or a legacy page load. Renewing the JWT does **not** revive a lapsed CF session — so `/v3/*` tools can be working while the legacy `/SUGboxAPI.cfm` tools (`legacy_get_my_signups`, `signupgenius_rsvp`) return 200 `{SUCCESS:false, MESSAGE:["…no longer logged in…"]}`. Verified live: identical cookies that worked earlier were rejected later with the browser still signed in.
+- **fetchproxy is a per-login bootstrap, not a hot-path proxy.** `@fetchproxy/bootstrap` reads `accessToken`/`MTOKEN` + `cfid`/`cftoken` cookies, then closes the bridge; every subsequent call is plain Node `fetch()` with those cookies. `accessToken` and `MTOKEN` carry the same JWT (`accessToken` preferred). The lift runs on the first request AND on every detected expiry — **not** once at startup. That matters because the JWT's TTL is 30 minutes (verified by decoding `iat`/`exp` on a live token) and a fetchproxy account has empty email/password, so there is nothing to form-login with; re-reading the browser is the only renewal path. `CookieSessionManager` still replays at most once per request, so a genuinely dead browser session surfaces an `AuthError` instead of looping.
+- **Re-reading cookies is not enough — the lift also renews.** An *idle* tab holds whatever the SPA last wrote, which can be a JWT that expired minutes ago (observed live: a lift returned a token 7 minutes past `exp`). `renewIfStale()` decodes `exp` and, within 120s of expiry, exchanges the token via `POST /v3/auth/refresh` with **both** `refreshToken` and `token` in the body — sending only `refreshToken` 400s with `token should not be null or undefined`. The response is `{data:{statuscode, response:{token, refreshtoken, expiresin, expires}}}` (lower-case inner keys) and rotates the refresh token. A controlled test confirmed the exchange does **not** invalidate the caller's existing session. Never log the decoded payload — the JWT carries name, email, phone, member id and IP.
+- **Widening the declared cookie set forces a re-pair.** The extension gates on the scope approved at pair time, so adding `refreshToken` makes existing installs fail with `cookie keys not in declared set: refreshToken` until the user revokes `signupgenius-mcp` in the Transporter popup and re-approves.
+- **Three expiry signals.** `isSessionExpired` treats a `401`, a `200` rendering the legacy HTML login page (matching `loginform`/`loginemail`/`go=c.Login`), and a `200` JSON envelope whose message contains "You are no longer logged in" as expiry → forces one re-login + replay. That third shape is what the legacy `/SUGboxAPI.cfm` dispatcher returns when the `cfid`/`cftoken` pair is missing or stale (the JWT alone does not satisfy it); it is checked without consulting `content-type`, which is not a dependable discriminator. A `403` is a Pro-permission failure, not expiry, and is left alone.
 - **Two envelope shapes.** The v2/v3 JSON API returns lower-case `{data, message, success}`; the legacy `/SUGboxAPI.cfm` dispatcher returns upper-case `{DATA, MESSAGE, SUCCESS}`. `normalizeKeyShape` / `normalizeLegacyShape` reconcile them so tools always see `ApiResponse<T>`.
-- **public-signup bypasses the client.** It scrapes server-rendered `/go/` HTML via `globalThis.fetch` (injectable for tests) and regex-extracts landmarks — there's no JSON surface for it. That's why it needs no auth and survives a deferred config error.
+- **public-signup bypasses the client.** It scrapes `/go/` HTML via `globalThis.fetch` (injectable for tests) and regex-extracts landmarks. The modern `/go/` page is a pure Angular shell — no `h1.SUGHeaderText`, no slot markup, and a generic `<title>Sign Me Up</title>` under any User-Agent — so the extractor falls back to the `og:title`/`og:description`/`og:image` block, which is the only real sheet metadata the server sends.
+- **Slot data comes from an unauthenticated v3 endpoint.** `signupgenius_get_signup_slots` calls `GET /v3/signups/{id}/slots` with **no** headers: a bogus `Authorization` returns 500, and a valid session returns a byte-identical body. It is the only read path for slots on a sheet the user does not own — the Pro `report_*` endpoints are key-only *and* owner-scoped. `s.getSignUpFormItems` is not an alternative: it is a form call whose `siid` is the already-selected items, so it cannot enumerate a sheet.
 - **100% coverage is enforced.** `vitest.config.ts` requires 100% lines/branches/functions/statements on `src/**` (excluding `src/index.ts`). Any new branch needs a test or CI fails — write the failing test first.
 - **stdio transport: stderr only.** stdout is reserved for JSON-RPC; the startup banner and all logging go to stderr, and `.env` is loaded via `loadDotenvSafely` (quiet) so it can't corrupt the stream.
 - **ESM + NodeNext.** Imports use `.js` extensions even for `.ts` sources.
