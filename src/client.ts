@@ -70,18 +70,31 @@ const LEGACY_LOGGED_OUT = /you are no longer logged in/i;
 async function isSessionExpired(res: Response): Promise<boolean> {
   if (res.status === 401) return true;
   if (res.status !== 200) return false;
-  const text = await res.clone().text();
-  // Shape 3 is checked WITHOUT consulting content-type. The dispatcher's
-  // header is not a dependable discriminator, and the phrase is specific
-  // enough that a false positive is not a practical concern.
-  if (LEGACY_LOGGED_OUT.test(text)) return true;
+  // Shape 3 comes ONLY from the legacy /SUGboxAPI.cfm dispatcher. Gate on a
+  // marker the dispatcher path sets rather than on content-type (which it does
+  // not set dependably) or res.url (empty on a synthesized Response). Scoping
+  // this way also keeps the extra clone().text() off every v3 API call —
+  // including write POSTs — where the shape cannot occur.
+  if (legacyResponses.has(res)) {
+    const legacyText = await res.clone().text();
+    if (LEGACY_LOGGED_OUT.test(legacyText)) return true;
+  }
   // Shape 2 stays gated to non-JSON responses, as before: the login-page
   // markers are short enough that scanning JSON bodies for them could
   // plausibly misfire on user-authored sign-up content.
   const ct = res.headers.get('content-type') ?? '';
   if (ct && !ct.includes('text/html')) return false;
+  const text = await res.clone().text();
   return /loginform|loginemail|go=c\.Login/i.test(text);
 }
+
+/**
+ * Responses that came from the legacy `/SUGboxAPI.cfm` dispatcher.
+ *
+ * A WeakSet keeps the marking out of the Response's own shape (which is not
+ * ours to mutate) and lets entries be collected with the responses.
+ */
+const legacyResponses = new WeakSet<Response>();
 
 export class SignUpGeniusClient {
   private account: Account | null;
@@ -276,11 +289,15 @@ export class SignUpGeniusClient {
     // request() only routes here when mode === 'session', so the cast is safe.
     const acct = this.requireAccount() as Extract<Account, { mode: 'session' }>;
     const url = `${acct.legacyBaseUrl}/SUGboxAPI.cfm?go=${encodeURIComponent(action)}`;
-    const res = await this.authedFetch(url, {
-      method: 'POST',
-      body: JSON.stringify(opts.body ?? {}),
-      headers: { 'Content-Type': 'application/json' },
-    });
+    const res = await this.authedFetch(
+      url,
+      {
+        method: 'POST',
+        body: JSON.stringify(opts.body ?? {}),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      { legacy: true },
+    );
     return parseEnvelope<T>(res, action, normalizeLegacyShape as Normalizer<T>);
   }
 
@@ -294,25 +311,34 @@ export class SignUpGeniusClient {
   private async authedFetch(
     url: string,
     init: { method: string; body?: BodyInit; headers?: Record<string, string> },
+    opts: { legacy?: boolean } = {},
   ): Promise<Response> {
+    const mark = (res: Response): Response => {
+      if (opts.legacy) legacyResponses.add(res);
+      return res;
+    };
     if (!this.session) {
       // key mode: stateless, user_key rides in the query string.
-      return fetch(url, {
-        method: init.method,
-        headers: { Accept: 'application/json', ...(init.headers ?? {}) },
-        body: init.body,
-      });
+      return mark(
+        await fetch(url, {
+          method: init.method,
+          headers: { Accept: 'application/json', ...(init.headers ?? {}) },
+          body: init.body,
+        }),
+      );
     }
-    return this.session.withSession((session) =>
-      fetch(url, {
-        method: init.method,
-        headers: {
-          Accept: 'application/json',
-          ...(init.headers ?? {}),
-          ...sessionAuthHeaders(session),
-        },
-        body: init.body,
-      }),
+    return this.session.withSession(async (session) =>
+      mark(
+        await fetch(url, {
+          method: init.method,
+          headers: {
+            Accept: 'application/json',
+            ...(init.headers ?? {}),
+            ...sessionAuthHeaders(session),
+          },
+          body: init.body,
+        }),
+      ),
     );
   }
 }

@@ -681,3 +681,30 @@ describe('ModeMismatchError messaging (shared mcp-utils template)', () => {
     expect(err.message).toMatch(/requires session mode but the server is running in key mode/);
   });
 });
+
+describe('isSessionExpired — legacy-only body sniffing', () => {
+  // The "no longer logged in" envelope comes ONLY from /SUGboxAPI.cfm. Applying
+  // the phrase check (and its clone().text()) to every 200 meant v3 GETs and
+  // write POSTs paid for a shape that cannot occur there.
+  const fakeLogin = vi.fn(async () => ({ accessToken: 'jwt', cookieHeader: 'a=b' }));
+  afterEach(() => fakeLogin.mockClear());
+
+  it('does not treat a v3 response containing the phrase as expiry', async () => {
+    // Contrived, but it proves the gate: user-authored sign-up content could
+    // contain anything, and a v3 body must never be scanned for it.
+    const spy = mockFetch({
+      status: 200,
+      rawBody: JSON.stringify({
+        data: { description: 'Note: you are no longer logged in to the old system.' },
+        message: [],
+        success: true,
+      }),
+    });
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: fakeLogin });
+    const out = await client.request<{ description: string }>('/signups/created');
+    expect(out.success).toBe(true);
+    // One fetch, one login — no expiry replay was triggered.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(fakeLogin).toHaveBeenCalledTimes(1);
+  });
+});

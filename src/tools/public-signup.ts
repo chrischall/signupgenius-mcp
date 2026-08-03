@@ -305,9 +305,21 @@ export interface SlotItemSummary {
   remaining: number | null;
   unlimited: boolean;
   state?: string;
-  /** True when the OWNER hid participant names — not a permission failure. */
+  /**
+   * The slot's `hidenames` display setting, as reported by the API — an OWNER
+   * preference, not a permission boundary, and NOT a guarantee about
+   * `participants` below. Surfaced so a caller can explain an empty
+   * participant list without implying they lack access.
+   */
   hidenames: boolean;
-  /** Present only when the sheet exposes names. */
+  /**
+   * Participant names exactly as the endpoint returned them, omitted when it
+   * returned none. Deliberately NOT filtered by `hidenames`: this is a
+   * pass-through of a public endpoint, and second-guessing it would hide data
+   * the API chose to publish. On the sheets observed during recon a
+   * `hidenames` slot returned an empty list, but that is the server's
+   * behavior to enforce, not this tool's to simulate.
+   */
   participants?: string[];
 }
 
@@ -391,8 +403,9 @@ export function registerPublicSignUpTools(
         'for any public SignUpGenius sign-up, given its URL, slug, or numeric id. ' +
         'Requires NO auth and works for sheets the user did not create — use this ' +
         'instead of signupgenius_report_* whenever you need slot availability. ' +
-        'Note: participant names are omitted on slots whose creator enabled ' +
-        '"hide names" (reported per-item as `hidenames`).',
+        'Participant names appear only when the endpoint publishes them; each item ' +
+        'reports the slot\'s `hidenames` display setting so an empty list can be ' +
+        'explained without implying missing access.',
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: slotsInput.shape,
     },
@@ -428,7 +441,14 @@ export function registerPublicSignUpTools(
         signupid,
         source: url,
         slotCount: items.length,
-        totalRemaining: items.reduce((n, i) => n + (i.remaining ?? 0), 0),
+        // Only finite items contribute. An unlimited item has no `remaining`,
+        // and folding it in as 0 made an all-unlimited sheet report
+        // `totalRemaining: 0` — which reads as "full" when it is the opposite.
+        // `unlimitedSlots` carries what the sum structurally cannot.
+        totalRemaining: items
+          .filter((i) => !i.unlimited)
+          .reduce((n, i) => n + (i.remaining ?? 0), 0),
+        unlimitedSlots: items.filter((i) => i.unlimited).length,
         items,
       });
     },
