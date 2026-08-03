@@ -54,7 +54,7 @@
 //   - `loadAccount()` (the existing env-var resolver) is reused as-is so the
 //     legacy paths keep working unchanged.
 
-import { bootstrap } from '@fetchproxy/bootstrap';
+import { createSessionLifter } from '@fetchproxy/bootstrap';
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@fetchproxy/server';
 import { parseBoolEnv } from '@chrischall/mcp-utils';
 import { loadAccount, type Account, type SessionAccount } from './config.js';
@@ -255,16 +255,15 @@ async function renewIfStale(accessToken: string, refreshToken?: string): Promise
 }
 
 /**
- * Lift a fresh session out of the user's signed-in signupgenius.com tab.
+ * The declared browser scope, as a repeatable lift.
  *
- * Runs on every login/renewal, not once at startup. `@fetchproxy/bootstrap`
- * opens a one-shot WebSocket bridge, asks the extension for the declared
- * cookies, and closes it again — fetchproxy is still NOT in the request hot
- * path; only in the renewal path.
+ * `createSessionLifter` (bootstrap 1.9+) is the library form of what this file
+ * used to hand-roll: construction touches nothing, and each call opens the
+ * bridge, reads the declared buckets, and closes it. Using it also gets
+ * concurrent renewals single-flighted for free — two expiries racing now share
+ * one bridge round-trip instead of opening two.
  */
-async function liftBrowserSession(): Promise<BrowserSession> {
-    try {
-      const session = await bootstrap({
+const liftDeclaredScope = createSessionLifter({
         serverName: pkg.name,
         version: pkg.version,
         domains: ['signupgenius.com'],
@@ -292,7 +291,20 @@ async function liftBrowserSession(): Promise<BrowserSession> {
           sessionStorage: [],
           captureHeaders: [],
         },
-      });
+});
+
+/**
+ * Lift a fresh session out of the user's signed-in signupgenius.com tab.
+ *
+ * Runs on every login/renewal, not once at startup — fetchproxy is still NOT
+ * in the request hot path, only the renewal path. The post-processing below
+ * (JWT staleness check + refresh exchange) is exactly the "compose in
+ * userland" shape createSessionLifter's docs describe: the library owns HOW to
+ * read the browser, this owns what the values mean once read.
+ */
+async function liftBrowserSession(): Promise<BrowserSession> {
+    try {
+      const session = await liftDeclaredScope();
 
       const lifted = session.cookies['accessToken'] ?? session.cookies['MTOKEN'];
       const accessToken = lifted
