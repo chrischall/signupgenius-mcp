@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.2.2...v1.3.0) (2026-08-03)
+
+
+### Features
+
+* add unauthenticated slot listing and fix the fetchproxy session lifecycle ([#103](https://github.com/chrischall/signupgenius-mcp/issues/103)) ([941a9a1](https://github.com/chrischall/signupgenius-mcp/commit/941a9a14edeb21cb04e1221db68ef15892b167f0))
+
+
+### Bug Fixes
+
+* **slots:** correct unlimited accounting and scope legacy expiry sniffing ([#106](https://github.com/chrischall/signupgenius-mcp/issues/106)) ([b72f58f](https://github.com/chrischall/signupgenius-mcp/commit/b72f58f3d960f62e68d54f5adb8ca7f2a8a8282e)), closes [#104](https://github.com/chrischall/signupgenius-mcp/issues/104)
+
+
+### Refactor
+
+* **auth:** collapse the hand-rolled lifter onto createSessionLifter ([#107](https://github.com/chrischall/signupgenius-mcp/issues/107)) ([dfed6d8](https://github.com/chrischall/signupgenius-mcp/commit/dfed6d865c477cd33358b9de2a09f9a258a0c202))
+
 ## [1.2.2](https://github.com/chrischall/signupgenius-mcp/compare/v1.2.1...v1.2.2) (2026-07-30)
 
 
