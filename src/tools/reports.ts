@@ -25,7 +25,10 @@ export function registerReportTools(server: McpServer, client: SignUpGeniusClien
         inputSchema: reportArgs.shape,
       },
       async (raw) => {
-        client.requireMode('key', toolName);
+        // requireKeyMode, not requireMode: when auth config is deferred the
+        // latter surfaces the fetchproxy/browser sign-in error, which can
+        // never enable a Pro-only endpoint. See client.requireKeyMode().
+        client.requireKeyMode(toolName);
         const args = reportArgs.parse(raw);
         const data = await client.request(`${path}/${args.signupId}`);
         return textContent(data);

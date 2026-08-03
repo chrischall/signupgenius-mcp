@@ -24,13 +24,13 @@ import { registerRsvpTool } from './tools/rsvp.js';
 // signupgenius.com in their browser). Tool invocations will surface the
 // same error message they'd see if we threw here.
 let account: Account | null = null;
-let preloaded: ResolvedAuth['preloaded'];
+let refreshSession: ResolvedAuth['refresh'];
 let source: ResolvedAuth['source'] | undefined;
 let configError: Error | null = null;
 try {
   const resolved = await resolveAuth();
   account = resolved.account;
-  preloaded = resolved.preloaded;
+  refreshSession = resolved.refresh;
   source = resolved.source;
 } catch (e) {
   configError = e as Error;
@@ -38,7 +38,7 @@ try {
 
 const client = new SignUpGeniusClient(account, {
   configError: configError ?? undefined,
-  preloaded,
+  refreshSession,
 });
 
 const bannerLines = account

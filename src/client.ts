@@ -53,17 +53,33 @@ interface LegacyEnvelope<T> {
  *     markers) so an unrelated non-JSON 200 still surfaces as a parse error
  *     rather than masquerading as an expiry.
  *
+ *  3. A `200` with a well-formed **JSON** envelope whose `SUCCESS` is false and
+ *     whose `MESSAGE` says "You are no longer logged in". The legacy
+ *     /SUGboxAPI.cfm dispatcher answers this way when the ColdFusion
+ *     `cfid`/`cftoken` pair is missing or stale — the JWT alone does not
+ *     satisfy it. Without this case an expired legacy session surfaced as a
+ *     generic application error and never triggered the re-login it needed.
+ *     Deliberately narrow: any OTHER `SUCCESS:false` is a real application
+ *     error and must surface untouched, or a genuine failure would burn a
+ *     pointless re-login and hide itself behind the retry.
+ *
  * Reads a clone so the caller can still consume the original body.
  */
+const LEGACY_LOGGED_OUT = /you are no longer logged in/i;
+
 async function isSessionExpired(res: Response): Promise<boolean> {
   if (res.status === 401) return true;
   if (res.status !== 200) return false;
-  const ct = res.headers.get('content-type') ?? '';
-  const looksHtml = ct.includes('text/html');
-  // Only sniff the body for a 200 that could plausibly be the HTML login page;
-  // skip JSON responses entirely (the hot path) so we don't clone every call.
-  if (ct && !looksHtml) return false;
   const text = await res.clone().text();
+  // Shape 3 is checked WITHOUT consulting content-type. The dispatcher's
+  // header is not a dependable discriminator, and the phrase is specific
+  // enough that a false positive is not a practical concern.
+  if (LEGACY_LOGGED_OUT.test(text)) return true;
+  // Shape 2 stays gated to non-JSON responses, as before: the login-page
+  // markers are short enough that scanning JSON bodies for them could
+  // plausibly misfire on user-authored sign-up content.
+  const ct = res.headers.get('content-type') ?? '';
+  if (ct && !ct.includes('text/html')) return false;
   return /loginform|loginemail|go=c\.Login/i.test(text);
 }
 
@@ -80,52 +96,51 @@ export class SignUpGeniusClient {
    * tool call surfaces the error — but the server still starts cleanly,
    * which is what the install-time smoke test requires.
    *
-   * `preloaded` is the fetchproxy escape hatch: when set, the client uses
-   * the supplied JWT + cookie header as-if it had just successfully run
-   * `sessionLogin()`. On expiry it falls back to the lazy login flow only if
-   * usable credentials are present on the account — otherwise the expiry
-   * surfaces verbatim (re-sign-in is required in the browser).
+   * `refreshSession` is the fetchproxy escape hatch: when set, it REPLACES
+   * `sessionLogin()` as the way this client mints a session — called lazily on
+   * the first request and again on every detected expiry. It must re-read the
+   * browser each time rather than return a captured value; the SignUpGenius
+   * JWT lives 30 minutes, and a fetchproxy account has no credentials to
+   * form-login with once it lapses.
    */
   constructor(
     account: Account | null,
     opts: {
       configError?: Error;
       sessionLogin?: SessionLoginFn;
-      preloaded?: { accessToken: string; cookieHeader: string };
+      refreshSession?: () => Promise<SugSession>;
     } = {},
   ) {
     this.account = account;
     this.configError = opts.configError ?? null;
     this.sessionLoginFn = opts.sessionLogin ?? defaultSessionLogin;
     if (account?.mode === 'session') {
-      this.session = this.makeSessionManager(account, opts.preloaded);
+      this.session = this.makeSessionManager(account, opts.refreshSession);
     }
   }
 
   /**
    * Build the cookie-session manager for session/fetchproxy mode.
    *
-   * `login` mints a fresh session. A `preloaded` set (fetchproxy) is consumed
-   * exactly once on the first login so the very first request reuses the
-   * browser's JWT/cookies without a form POST. After that — and in plain
-   * session mode — it runs `sessionLogin()`. When no credentials are present
-   * (the fetchproxy account has empty email/password), a re-login is
-   * impossible: throwing here makes `withSession` surface the original
-   * expired-looking response, so the user is told to re-sign-in in the browser
-   * rather than looping on a doomed re-login.
+   * `login` mints a fresh session, and `CookieSessionManager` calls it lazily
+   * on the first request and once more on a detected expiry (then replays).
+   * Three cases:
+   *
+   *   * `refreshSession` set (fetchproxy) — re-lift the browser session. This
+   *     runs on EVERY renewal, not just the first, which is what keeps the
+   *     path alive past the JWT's 30-minute TTL.
+   *   * credentials present (plain session mode) — run `sessionLogin()`.
+   *   * neither — nothing can mint a session; throwing here makes
+   *     `withSession` surface the original response rather than loop on a
+   *     doomed re-login.
    */
   private makeSessionManager(
     acct: Extract<Account, { mode: 'session' }>,
-    preloaded?: { accessToken: string; cookieHeader: string },
+    refreshSession?: () => Promise<SugSession>,
   ): CookieSessionManager<SugSession> {
-    let pending = preloaded;
     return new CookieSessionManager<SugSession>({
       login: async () => {
-        if (pending) {
-          const seeded = pending;
-          pending = undefined;
-          return seeded;
-        }
+        if (refreshSession) return refreshSession();
         if (!acct.email || !acct.password) {
           throw new AuthError(401);
         }
@@ -175,6 +190,27 @@ export class SignUpGeniusClient {
     if (acct.mode !== mode) {
       throw new ModeMismatchError(acct.mode, mode, featureLabel);
     }
+  }
+
+  /**
+   * Guard for features ONLY key mode can ever satisfy (the Pro slot reports).
+   *
+   * Why this exists instead of just calling `requireMode('key', …)`:
+   * `requireMode` calls `requireAccount()` first, so when config resolution was
+   * deferred the stored `configError` is what surfaces — and that error's
+   * remediation ("sign into signupgenius.com in your browser") can never
+   * enable a key-only feature. The user then chases a browser sign-in that
+   * cannot possibly fix the tool. Check the mode first so the requirement that
+   * actually applies leads, while keeping the config error visible in case it
+   * is itself a key-mode misconfiguration (e.g. a bad SIGNUPGENIUS_BASE_URL
+   * alongside a valid SIGNUPGENIUS_USER_KEY).
+   */
+  requireKeyMode(featureLabel: string): void {
+    if (this.account) {
+      this.requireMode('key', featureLabel);
+      return;
+    }
+    throw new KeyModeRequiredError(featureLabel, this.configError);
   }
 
   /**
@@ -349,6 +385,31 @@ function parseJsonBody<T>(text: string): T | null {
  * message can't carry it) because the remediation is mode-dependent SUG
  * guidance — surfaced as the `hint` per the `McpToolError` contract.
  */
+/**
+ * A key-only feature was invoked while auth config was still deferred.
+ *
+ * Distinct from `ModeMismatchError` (which needs a *resolved* account to name
+ * the current mode) and from the raw `configError` (whose browser/session
+ * remediation does not apply to Pro-only endpoints). Slot reports live only on
+ * the v2/k Pro surface — no v3 session equivalent exists — so no amount of
+ * browser sign-in will satisfy them.
+ */
+export class KeyModeRequiredError extends McpToolError {
+  private static readonly HINT =
+    'Set SIGNUPGENIUS_USER_KEY (a SignUpGenius Pro API key). Signing into signupgenius.com in your ' +
+    'browser cannot enable this — slot reports exist only on the Pro v2/k API, which uses a ' +
+    'different auth scheme than the browser session.';
+
+  constructor(featureLabel: string, configError?: Error | null) {
+    super(
+      `${featureLabel} requires Pro key mode. ${KeyModeRequiredError.HINT}` +
+        (configError ? ` (auth is also unconfigured: ${configError.message})` : ''),
+      { hint: KeyModeRequiredError.HINT },
+    );
+    this.name = 'KeyModeRequiredError';
+  }
+}
+
 export class AuthError extends McpToolError {
   private static readonly HINT =
     'For key mode: check SIGNUPGENIUS_USER_KEY (it may be wrong, revoked, or the account no longer has Pro). ' +

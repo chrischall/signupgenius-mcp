@@ -306,7 +306,10 @@ describe('signupgenius_rsvp tool', () => {
 describe('SignUpGeniusClient.preProcessSignUp', () => {
   it('POSTs to /index.cfm with form-encoded body and the session auth headers', async () => {
     const client = new SignUpGeniusClient(sessionAccount, {
-      preloaded: { accessToken: 'JWT-XYZ', cookieHeader: 'cfid=1; cftoken=2; accessToken=JWT-XYZ' },
+      refreshSession: async () => ({
+        accessToken: 'JWT-XYZ',
+        cookieHeader: 'cfid=1; cftoken=2; accessToken=JWT-XYZ',
+      }),
     });
     const stub = vi.fn().mockResolvedValue({ ok: false, status: 301, headers: new Headers() });
     vi.stubGlobal('fetch', stub);
@@ -325,7 +328,7 @@ describe('SignUpGeniusClient.preProcessSignUp', () => {
 
   it('throws when the server returns an unexpected status', async () => {
     const client = new SignUpGeniusClient(sessionAccount, {
-      preloaded: { accessToken: 'x', cookieHeader: 'y' },
+      refreshSession: async () => ({ accessToken: 'x', cookieHeader: 'y' }),
     });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, headers: new Headers() }));
     await expect(client.preProcessSignUp(SLUG)).rejects.toThrow(/PreProcessSignup/);
