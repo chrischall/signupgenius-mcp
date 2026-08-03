@@ -640,3 +640,63 @@ describe('ogTag attribute-order tolerance', () => {
     expect(d.description).toEqual([]);
   });
 });
+
+describe('slots — unlimited capacity accounting', () => {
+  // Folding unlimited items in as `remaining: 0` made an all-unlimited sheet
+  // report `totalRemaining: 0`, which reads as "full" when it is the exact
+  // opposite. A sum cannot represent "no ceiling", so the count is carried
+  // separately rather than encoded into the total.
+  const unlimitedJson = JSON.stringify({
+    success: true,
+    data: {
+      slots: [
+        {
+          title: 'Bring a dish',
+          slotitems: [
+            { slotitemid: 1, quantity: { limit: null, taken: 3, remaining: null, unlimited: true } },
+            { slotitemid: 2, quantity: { limit: null, taken: 0, remaining: null, unlimited: true } },
+          ],
+        },
+      ],
+    },
+  });
+
+  const run = async (json: string) => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValue({ ok: true, status: 200, text: async () => json });
+    const handlers = setupTool(fetcher);
+    const res = (await handlers.get('signupgenius_get_signup_slots')!({ url: '1' })) as {
+      content: Array<{ text: string }>;
+    };
+    return JSON.parse(res.content[0].text);
+  };
+
+  it('does not report an all-unlimited sheet as if it were full', async () => {
+    const out = await run(unlimitedJson);
+    expect(out.slotCount).toBe(2);
+    expect(out.unlimitedSlots).toBe(2);
+    // 0 finite remaining, but that must not be read as "nothing available".
+    expect(out.totalRemaining).toBe(0);
+  });
+
+  it('sums only the finite items on a mixed sheet', async () => {
+    const mixed = JSON.stringify({
+      success: true,
+      data: {
+        slots: [
+          {
+            title: 'Mixed',
+            slotitems: [
+              { slotitemid: 1, quantity: { limit: 6, taken: 2, remaining: 4, unlimited: false } },
+              { slotitemid: 2, quantity: { limit: null, taken: 9, remaining: null, unlimited: true } },
+            ],
+          },
+        ],
+      },
+    });
+    const out = await run(mixed);
+    expect(out.totalRemaining).toBe(4);
+    expect(out.unlimitedSlots).toBe(1);
+  });
+});

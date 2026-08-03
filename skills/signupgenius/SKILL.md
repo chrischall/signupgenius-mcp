@@ -88,20 +88,24 @@ Modes can be combined; Pro key wins where it applies, session/fetchproxy handles
 ### Public sign-up
 
 - **`signupgenius_get_public_signup`** — Fetch a public sign-up page by URL or slug. No auth required.
+- **`signupgenius_get_signup_slots`** — Every slot on ANY public sign-up: dates, times, locations, taken/remaining. **No auth required**, and it works on sheets the user did not create. Reach for this first for "what's still open" — the report tools below cannot answer it for someone else's sheet.
 - **`signupgenius_rsvp`** *(write)* — RSVP to a public sign-up slot.
 
-### Reports — slots for a sign-up (Pro key only)
+### Reports — slots for a sign-up (Pro key only, **owner-scoped**)
 
 - **`signupgenius_report_all`** — Every slot + participant on a sign-up.
 - **`signupgenius_report_filled`** — Filled slots only.
 - **`signupgenius_report_available`** — Available slots only.
 
-Session-mode users hit a fast `ModeMismatchError` on the report tools with a clear instruction to set `SIGNUPGENIUS_USER_KEY`.
+These need `SIGNUPGENIUS_USER_KEY` **and** answer only for sign-ups the key holder created — a Pro key is not a workaround for someone else's sheet. Use `signupgenius_get_signup_slots` for availability on any sheet; the reports add what it cannot carry: per-participant identity and custom-question answers.
+
+Session-mode users hit a fast `ModeMismatchError` (or `KeyModeRequiredError` when auth is unconfigured) with a clear instruction to set `SIGNUPGENIUS_USER_KEY`.
 
 ## Trigger examples
 
 - "Check SignUpGenius — what am I signed up for this week?" → `signupgenius_list_signedupfor` (+ `_legacy_get_my_signups` in session mode)
-- "What slots are still open on the PTA potluck sign-up?" → `signupgenius_report_available` (Pro key)
+- "What slots are still open on the PTA potluck sign-up?" → `signupgenius_get_signup_slots` (no auth, works on anyone's sheet)
+- "Who signed up for which slot on MY potluck?" → `signupgenius_report_all` (Pro key, own sheets only)
 - "List my SignUpGenius groups" → `signupgenius_list_groups`
 - "Add Jordan Smith (<jordan@example.com>) to my Scouts group" → `signupgenius_add_group_member`
 - "What sign-ups have I created that are still active?" → `signupgenius_list_created_active`
