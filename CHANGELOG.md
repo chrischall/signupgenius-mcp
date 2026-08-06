@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/chrischall/signupgenius-mcp/compare/v1.3.0...v1.3.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **deps:** move to @fetchproxy/server 2.0.0 for the v3 handshake ([#113](https://github.com/chrischall/signupgenius-mcp/issues/113)) ([74e2765](https://github.com/chrischall/signupgenius-mcp/commit/74e2765509265578aeb9fc4ba308807bfd73d328))
+
 ## [1.3.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.2.2...v1.3.0) (2026-08-03)
 
 
