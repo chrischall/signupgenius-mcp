@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { SignUpGeniusClient } from '../client.js';
 import { textContent } from './_shared.js';
 import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
-import { fetchParticipants } from './slots.js';
+import type { Fetcher } from './sug-legacy.js';
+import { fetchAllParticipants } from './slots.js';
 
 /**
  * Slot claim + release — the two core participant WRITES.
@@ -228,7 +229,12 @@ const releaseSchema = z.object({
   confirm: z.boolean().optional().describe('Must be true to actually withdraw.'),
 });
 
-export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusClient): void {
+export function registerSlotWriteTools(
+  server: McpServer,
+  client: SignUpGeniusClient,
+  /** Public (unauthenticated) fetch used for the ownership + read-back checks. */
+  fetcher: Fetcher = (url, init) => globalThis.fetch(url, init),
+): void {
   // Both writes ride the browser session (JWT + ColdFusion cookies). The Pro
   // v2/k key API has no equivalent, so registering them in key mode would
   // advertise something that can never run.
@@ -402,6 +408,36 @@ export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusCl
         );
       }
 
+      // Resolving OUR id is not enough — `memberId` is optional, so on the
+      // normal path nothing would have tied `itemMemberId` to us. Look the
+      // entry up on the slot and check who it actually belongs to. This is the
+      // guard that matters: signupgenius_list_slots publishes every
+      // participant's item_member_id and member_id for any public sheet, so a
+      // mis-picked row is a realistic way to delete a stranger's sign-up.
+      const entries = await fetchAllParticipants(fetcher, parts.signupid, args.slotitemid);
+      const entry = entries.find((p) => p.item_member_id === args.itemMemberId);
+      if (!entry) {
+        throw new Error(
+          `No sign-up entry ${args.itemMemberId} is listed on slot ${args.slotitemid}. ` +
+            'It may already have been withdrawn, or the ids may be from different rows — ' +
+            're-read signupgenius_list_slots and use item_member_id and slotitemid from the SAME row.',
+        );
+      }
+      if (entry.member_id === undefined) {
+        throw new Error(
+          `Sign-up entry ${args.itemMemberId} ("${entry.display_name}") is not tied to a member ` +
+            'account, so it cannot be confirmed as the signed-in user\'s. Refusing to withdraw it — ' +
+            'remove a guest sign-up from the SignUpGenius UI instead.',
+        );
+      }
+      if (entry.member_id !== myId) {
+        throw new Error(
+          `Refusing to withdraw: sign-up entry ${args.itemMemberId} ("${entry.display_name}") ` +
+            `belongs to member ${entry.member_id}, not the signed-in member (${myId}). ` +
+            'This tool only removes the current user\'s own sign-up.',
+        );
+      }
+
       const preview = {
         action: 'release',
         signupid: parts.signupid,
@@ -409,6 +445,7 @@ export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusCl
         itemMemberId: args.itemMemberId,
         slotitemid: args.slotitemid,
         memberId: myId,
+        withdrawing: { name: entry.display_name, spots: entry.quantity },
       };
       if (!args.confirm) {
         return textContent({
@@ -427,12 +464,7 @@ export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusCl
       // so a "success" is only meaningful if the entry is actually gone.
       let verified: boolean | null = null;
       try {
-        const remaining = await fetchParticipants(
-          (url, init) => globalThis.fetch(url, init),
-          parts.signupid,
-          args.slotitemid,
-          0,
-        );
+        const remaining = await fetchAllParticipants(fetcher, parts.signupid, args.slotitemid);
         verified = !remaining.some((p) => p.item_member_id === args.itemMemberId);
       } catch {
         // Verification is best-effort; never turn a successful withdrawal into
@@ -440,9 +472,13 @@ export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusCl
         verified = null;
       }
       if (verified === false) {
+        // Deliberately does NOT claim "nothing was removed": the delete
+        // reported success and this read-back may simply be stale. State only
+        // what was observed.
         throw new Error(
-          `SignUpGenius accepted the withdrawal of entry ${args.itemMemberId} but it is still ` +
-            'listed on the slot. Nothing was removed — check the sheet in the UI.',
+          `SignUpGenius accepted the withdrawal of entry ${args.itemMemberId}, but it is still ` +
+            'listed on the slot. The removal may not have taken effect — check the sheet in the UI ' +
+            'before retrying.',
         );
       }
       return textContent({

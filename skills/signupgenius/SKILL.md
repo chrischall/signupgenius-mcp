@@ -87,9 +87,11 @@ Modes can be combined; Pro key wins where it applies, session/fetchproxy handles
 
 ### Public sign-up
 
-- **`signupgenius_get_public_signup`** — Fetch a public sign-up page by URL or slug. No auth required.
+- **`signupgenius_get_public_signup`** — Sheet metadata by URL or slug: title, description, organizer, category, timezone, and the custom questions a sign-up must answer. **No auth required.** Metadata only — it carries no slots.
 - **`signupgenius_list_slots`** — Every slot on ANY public sign-up: date, day of week, start/end time, title, location, capacity, filled vs available, and who has signed up (with the number of spots each entry consumes). **No auth required**, and it works on sheets the user did not create. Reach for this first for "what's still open" — the report tools below cannot answer it for someone else's sheet.
-- **`signupgenius_rsvp`** *(write)* — RSVP to a public sign-up slot.
+- **`signupgenius_rsvp`** *(write)* — RSVP yes/no/maybe to a headcount (Yes/No/Maybe) sheet. Not for slot-based sheets.
+- **`signupgenius_claim_slot`** *(write)* — Sign up for a slot on a slot-based sheet. Call it WITHOUT `confirm` first to get a dry-run preview of the slot and identity, show that to the user, then call again with `confirm: true`. Pass the sheet's required custom fields (read them from `signupgenius_get_public_signup`).
+- **`signupgenius_release_slot`** *(write)* — Give up a slot the user signed up for. Same two-step confirm as above. Takes `item_member_id` **and** `slotitemid` from the same `signupgenius_list_slots` row; it only ever withdraws the signed-in user's own entry and refuses anyone else's.
 
 ### Reports — slots for a sign-up (Pro key only, **owner-scoped**)
 

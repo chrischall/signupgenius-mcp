@@ -110,6 +110,29 @@ describe('registration gating', () => {
     expect(handlers.size).toBe(0);
   });
 
+  it('defaults to the real global fetch for the public checks', async () => {
+    // index.ts registers without a fetcher, so the default arm is the
+    // production path — exercise it rather than leaving it untested.
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ SUCCESS: true, MESSAGE: [], DATA: { participants: [] } }),
+    } as never);
+    const { handlers } = setupTools(registerSlotWriteTools, sessionAccount, () => ({
+      success: true,
+      message: [],
+      data: { id: 1 },
+    }));
+    await expect(
+      handlers.get('signupgenius_release_slot')!({
+        url: PARTS.urlid,
+        itemMemberId: 1,
+        slotitemid: 2,
+      }),
+    ).rejects.toThrow(/No sign-up entry/);
+    expect(spy).toHaveBeenCalled();
+  });
+
   it('registers both tools in session mode', () => {
     const { handlers } = setupTools(registerSlotWriteTools, sessionAccount);
     expect([...handlers.keys()].sort()).toEqual([
@@ -122,8 +145,32 @@ describe('registration gating', () => {
 /** Route the legacy actions the claim flow walks. */
 function claimSetup(over: Record<string, unknown> = {}) {
   const seen: Array<{ action: string; body: unknown }> = [];
+  // Public participants endpoint, used for the ownership + read-back checks.
+  // Default: the entry under test belongs to the signed-in member (4262737).
+  const pages: unknown[] = Array.isArray(over.participantPages)
+    ? (over.participantPages as unknown[])
+    : [
+        [{ firstname: 'Chris', lastname: 'Hall', myqty: 1, itemmemberid: 2000004, memberid: 4262737 }],
+      ];
+  let pageIdx = 0;
+  let fetchCalls = 0;
+  const publicFetcher = async () => {
+    if (over.participantsThrow) throw new Error('participants unavailable');
+    fetchCalls++;
+    // Fail only the post-delete read-back, not the ownership lookup.
+    if (typeof over.participantsThrowAfter === 'number' && fetchCalls > over.participantsThrowAfter) {
+      throw new Error('network');
+    }
+    const rows = pages[Math.min(pageIdx, pages.length - 1)] ?? [];
+    pageIdx++;
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ SUCCESS: true, MESSAGE: [], DATA: { participants: rows } }),
+    };
+  };
   const { client, handlers } = setupTools(
-    registerSlotWriteTools,
+    (server, c) => registerSlotWriteTools(server, c, publicFetcher as never),
     sessionAccount,
     (path: string, opts: unknown) => {
       const o = (opts ?? {}) as { legacyAction?: string; body?: unknown };
@@ -254,35 +301,53 @@ describe('signupgenius_claim_slot', () => {
 });
 
 describe('signupgenius_release_slot', () => {
-  const REL = { url: PARTS.urlid, itemMemberId: 2000004, slotitemid: 1762735194, memberId: 4262737 };
+  const REL = { url: PARTS.urlid, itemMemberId: 2000004, slotitemid: 1762735194 };
+  const MINE = { firstname: 'Chris', lastname: 'Hall', myqty: 1, itemmemberid: 2000004, memberid: 4262737 };
 
-  it('previews without removing anything', async () => {
+  it('previews without removing anything, naming who is being withdrawn', async () => {
     const { handlers, del } = claimSetup();
     const out = JSON.parse((await handlers.get('signupgenius_release_slot')!(REL)).content[0].text);
     expect(out.submitted).toBe(false);
     expect(out.note).toMatch(/DRY RUN/);
+    expect(out.withdrawing).toEqual({ name: 'Chris Hall', spots: 1 });
     expect(del).not.toHaveBeenCalled();
   });
 
-  it('resolves the member id from the session rather than trusting the caller', async () => {
-    const { handlers, del } = claimSetup();
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ SUCCESS: true, MESSAGE: [], DATA: { participants: [] } }),
-    } as never);
-    const out = JSON.parse(
-      (await handlers.get('signupgenius_release_slot')!({ ...REL, memberId: undefined, confirm: true }))
-        .content[0].text,
+  it('refuses an entry belonging to another participant, with NO memberId given', async () => {
+    // The default path: memberId is optional, so resolving only OUR id left
+    // itemMemberId completely unverified. list_slots publishes every
+    // participant's item_member_id, so a mis-picked row must not delete a
+    // stranger's sign-up.
+    const { handlers, del } = claimSetup({
+      participantPages: [
+        [{ firstname: 'Someone', lastname: 'Else', myqty: 1, itemmemberid: 2000004, memberid: 987654 }],
+      ],
+    });
+    await expect(handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true })).rejects.toThrow(
+      /belongs to member 987654, not the signed-in member \(4262737\)/,
     );
-    expect(del).toHaveBeenCalledWith(62393618, 2000004, 4262737);
-    expect(out.memberId).toBe(4262737);
-    expect(fetchSpy).toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
   });
 
-  it('refuses to withdraw an entry belonging to somebody else', async () => {
-    // list_slots publishes every participant's item_member_id and member_id
-    // for any public sheet, so a wrong row must not silently remove a stranger.
+  it('refuses a guest entry that is not tied to a member account', async () => {
+    const { handlers, del } = claimSetup({
+      participantPages: [[{ nonmembername: 'Guest', myqty: 1, itemmemberid: 2000004, memberid: 0 }]],
+    });
+    await expect(handlers.get('signupgenius_release_slot')!(REL)).rejects.toThrow(
+      /not tied to a member account/,
+    );
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the entry is not on that slot at all', async () => {
+    const { handlers, del } = claimSetup({ participantPages: [[]] });
+    await expect(handlers.get('signupgenius_release_slot')!(REL)).rejects.toThrow(
+      /No sign-up entry 2000004 is listed on slot 1762735194/,
+    );
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('still rejects an explicitly mismatched memberId before any lookup', async () => {
     const { handlers, del } = claimSetup();
     await expect(
       handlers.get('signupgenius_release_slot')!({ ...REL, memberId: 999999, confirm: true }),
@@ -304,44 +369,42 @@ describe('signupgenius_release_slot', () => {
     expect(out.memberId).toBe(4262737);
   });
 
-  it('verifies the entry actually disappeared', async () => {
-    const { handlers } = claimSetup();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({ SUCCESS: true, MESSAGE: [], DATA: { participants: [] } }),
-    } as never);
+  it('removes and verifies the entry disappeared', async () => {
+    const { handlers, del } = claimSetup({ participantPages: [[MINE], []] });
     const out = JSON.parse(
       (await handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true })).content[0].text,
     );
+    expect(del).toHaveBeenCalledWith(62393618, 2000004, 4262737);
     expect(out.submitted).toBe(true);
     expect(out.verified).toMatch(/no longer listed/);
   });
 
-  it('fails loudly when the entry is still listed after a "successful" removal', async () => {
-    const { handlers } = claimSetup();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () =>
-        JSON.stringify({
-          SUCCESS: true,
-          MESSAGE: [],
-          DATA: { participants: [{ firstname: 'A', lastname: 'B', myqty: 1, itemmemberid: 2000004 }] },
-        }),
-    } as never);
-    await expect(
-      handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true }),
-    ).rejects.toThrow(/still\s+listed/);
+  it('reports a still-listed entry without claiming nothing was removed', async () => {
+    const { handlers } = claimSetup({ participantPages: [[MINE], [MINE]] });
+    const err = await handlers
+      .get('signupgenius_release_slot')!({ ...REL, confirm: true })
+      .catch((e: Error) => e);
+    expect(err.message).toMatch(/still listed on the slot/);
+    // The delete reported success and the read-back may be stale, so the
+    // message must not assert that nothing happened.
+    expect(err.message).not.toMatch(/Nothing was removed/);
   });
 
   it('reports an unverifiable removal without failing it', async () => {
-    const { handlers } = claimSetup();
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network'));
+    const { handlers, del } = claimSetup({ participantsThrowAfter: 1 });
     const out = JSON.parse(
       (await handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true })).content[0].text,
     );
+    expect(del).toHaveBeenCalled();
     expect(out.submitted).toBe(true);
     expect(out.verified).toMatch(/could not re-check/);
+  });
+
+  it('surfaces a failed ownership lookup rather than deleting blind', async () => {
+    const { handlers, del } = claimSetup({ participantsThrow: true });
+    await expect(handlers.get('signupgenius_release_slot')!(REL)).rejects.toThrow(
+      /participants unavailable/,
+    );
+    expect(del).not.toHaveBeenCalled();
   });
 });

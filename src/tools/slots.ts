@@ -256,30 +256,50 @@ export function toParticipant(raw: RawParticipant): Participant {
   return p;
 }
 
-/** Fetch the participant list for a single slot item. Unauthenticated. */
-export async function fetchParticipants(
+/** Rows per participant page. `limitTo` is an END ROW, not a count. */
+const PARTICIPANT_PAGE = 100;
+/** Safety stop so a pathological sheet cannot loop forever. */
+const MAX_PARTICIPANT_PAGES = 20;
+
+/**
+ * Fetch EVERY participant on a slot item, paging until exhausted.
+ * Unauthenticated.
+ *
+ * Pagination semantics, probed live against sign-up 62393618 (a 5-participant
+ * slot): `offset` is a 1-based START row and **`limitTo` is an inclusive END
+ * row, not a page size** — `offset:3, limitTo:5` returns rows 3,4,5, and
+ * `offset:2, limitTo:3` returns two rows, not three. Reading `limitTo` as a
+ * count silently truncates. Overshooting the end is safe (`offset:1,
+ * limitTo:100` returns all 5) and an offset past the end returns an empty
+ * list rather than an error.
+ */
+export async function fetchAllParticipants(
   fetcher: Fetcher,
   listid: number,
   slotitemid: number,
-  expected: number,
 ): Promise<Participant[]> {
-  const data = await legacyPost<{ participants?: RawParticipant[] }>(
-    fetcher,
-    's.getSignUpParticipantsBySlotItem',
-    {
-      listid,
-      slotitemid,
-      offset: 1,
-      // Ask for comfortably more than the reported count so a row that grew
-      // between the two calls is not silently truncated.
-      limitTo: Math.max(expected, 0) + 50,
-      search: '',
-      orderBy: '',
-      orderDesc: false,
-      memberidViewing: 0,
-    },
-  );
-  return (data?.participants ?? []).map(toParticipant);
+  const out: Participant[] = [];
+  for (let page = 0; page < MAX_PARTICIPANT_PAGES; page++) {
+    const offset = page * PARTICIPANT_PAGE + 1;
+    const data = await legacyPost<{ participants?: RawParticipant[] }>(
+      fetcher,
+      's.getSignUpParticipantsBySlotItem',
+      {
+        listid,
+        slotitemid,
+        offset,
+        limitTo: offset + PARTICIPANT_PAGE - 1,
+        search: '',
+        orderBy: '',
+        orderDesc: false,
+        memberidViewing: 0,
+      },
+    );
+    const rows = data?.participants ?? [];
+    out.push(...rows.map(toParticipant));
+    if (rows.length < PARTICIPANT_PAGE) break;
+  }
+  return out;
 }
 
 export function registerSlotTools(
@@ -346,12 +366,7 @@ export function registerSlotTools(
           for (let i = next++; i < targets.length; i = next++) {
             const slot = targets[i];
             try {
-              slot.participants = await fetchParticipants(
-                fetcher,
-                signupid,
-                slot.slotitemid,
-                slot.participant_count,
-              );
+              slot.participants = await fetchAllParticipants(fetcher, signupid, slot.slotitemid);
             } catch {
               // One bad row degrades rather than failing the whole listing —
               // but record it, because `participants: undefined` otherwise

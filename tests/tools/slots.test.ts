@@ -6,7 +6,7 @@ import {
   isDateOnly,
   extractSlots,
   toParticipant,
-  fetchParticipants,
+  fetchAllParticipants,
   registerSlotTools,
 } from '../../src/tools/slots.js';
 import type { Fetcher } from '../../src/tools/sug-legacy.js';
@@ -244,26 +244,71 @@ describe('toParticipant', () => {
   });
 });
 
-describe('fetchParticipants', () => {
-  it('asks for headroom above the reported count', async () => {
-    const seen: string[] = [];
+describe('fetchAllParticipants', () => {
+  it('treats limitTo as an inclusive END ROW, not a page size', async () => {
+    // Probed live: offset:3, limitTo:5 returns rows 3,4,5 — three rows, not
+    // five. Reading limitTo as a count silently truncates every page.
+    const seen: Array<{ offset: number; limitTo: number }> = [];
     const f: Fetcher = async (_u, init) => {
-      seen.push((init as { body: string }).body);
+      seen.push(JSON.parse((init as { body: string }).body));
       return { ok: true, status: 200, text: async () => JSON.stringify(PARTICIPANTS) };
     };
-    const out = await fetchParticipants(f, 62393618, 1762735194, 5);
-    expect(JSON.parse(seen[0])).toMatchObject({ listid: 62393618, slotitemid: 1762735194, offset: 1, limitTo: 55 });
+    const out = await fetchAllParticipants(f, 62393618, 1762735194);
+    expect(seen[0]).toMatchObject({ offset: 1, limitTo: 100 });
     expect(out).toHaveLength(5);
     expect(out.find((p) => p.quantity === 2)?.display_name).toBe('Devon Okafor');
   });
 
-  it('handles a negative expected count and a missing participants array', async () => {
+  it('stops after a short page', async () => {
+    let calls = 0;
+    const f: Fetcher = async () => {
+      calls++;
+      return { ok: true, status: 200, text: async () => JSON.stringify(PARTICIPANTS) };
+    };
+    await fetchAllParticipants(f, 1, 2);
+    expect(calls).toBe(1);
+  });
+
+  it('pages until a short page arrives, advancing the window', async () => {
+    const full = {
+      SUCCESS: true,
+      MESSAGE: [],
+      DATA: {
+        participants: Array.from({ length: 100 }, (_, i) => ({
+          firstname: `P${i}`,
+          lastname: 'X',
+          myqty: 1,
+          itemmemberid: i + 1,
+        })),
+      },
+    };
+    const windows: Array<{ offset: number; limitTo: number }> = [];
+    let calls = 0;
+    const f: Fetcher = async (_u, init) => {
+      windows.push(JSON.parse((init as { body: string }).body));
+      calls++;
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(calls === 1 ? full : { SUCCESS: true, MESSAGE: [], DATA: { participants: [] } }),
+      };
+    };
+    const out = await fetchAllParticipants(f, 1, 2);
+    expect(out).toHaveLength(100);
+    expect(windows).toEqual([
+      { listid: 1, slotitemid: 2, offset: 1, limitTo: 100, search: '', orderBy: '', orderDesc: false, memberidViewing: 0 },
+      { listid: 1, slotitemid: 2, offset: 101, limitTo: 200, search: '', orderBy: '', orderDesc: false, memberidViewing: 0 },
+    ]);
+  });
+
+  it('handles a missing participants array', async () => {
     const f: Fetcher = async () => ({
       ok: true,
       status: 200,
       text: async () => JSON.stringify({ SUCCESS: true, DATA: {}, MESSAGE: [] }),
     });
-    expect(await fetchParticipants(f, 1, 2, -10)).toEqual([]);
+    expect(await fetchAllParticipants(f, 1, 2)).toEqual([]);
   });
 
   it('rejects a SUCCESS:true envelope with an empty payload', async () => {
@@ -273,7 +318,7 @@ describe('fetchParticipants', () => {
       status: 200,
       text: async () => JSON.stringify({ SUCCESS: true, DATA: null, MESSAGE: [] }),
     });
-    await expect(fetchParticipants(f, 1, 2, 0)).rejects.toThrow(/empty payload/);
+    await expect(fetchAllParticipants(f, 1, 2)).rejects.toThrow(/empty payload/);
   });
 });
 
