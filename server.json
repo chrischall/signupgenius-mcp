@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.chrischall/signupgenius-mcp",
-  "description": "SignUpGenius for Claude — sign-ups, slot reports, and groups. Free accounts or Pro API key.",
+  "description": "SignUpGenius for Claude \u2014 sign-ups, slots, groups, and RSVPs. Free accounts or Pro API key.",
   "repository": {
     "url": "https://github.com/chrischall/signupgenius-mcp",
     "source": "github"
@@ -18,20 +18,20 @@
       "environmentVariables": [
         {
           "name": "SIGNUPGENIUS_EMAIL",
-          "description": "SignUpGenius login email (recommended). Pair with SIGNUPGENIUS_PASSWORD for session mode — works on free accounts. No SSO/2FA.",
+          "description": "SignUpGenius login email (recommended). Pair with SIGNUPGENIUS_PASSWORD for session mode \u2014 works on free accounts. No SSO/2FA.",
           "isRequired": false,
           "format": "string"
         },
         {
           "name": "SIGNUPGENIUS_PASSWORD",
-          "description": "SignUpGenius password (recommended) — required iff SIGNUPGENIUS_EMAIL is set.",
+          "description": "SignUpGenius password (recommended) \u2014 required iff SIGNUPGENIUS_EMAIL is set.",
           "isRequired": false,
           "format": "string",
           "isSecret": true
         },
         {
           "name": "SIGNUPGENIUS_USER_KEY",
-          "description": "SignUpGenius Pro API key (Pro Tools > API Management). Required only for slot REPORTS — Pro subscription needed.",
+          "description": "SignUpGenius Pro API key (Pro Tools > API Management). Required only for slot REPORTS \u2014 Pro subscription needed.",
           "isRequired": false,
           "format": "string",
           "isSecret": true
@@ -62,7 +62,7 @@
         },
         {
           "name": "SIGNUPGENIUS_DISABLE_FETCHPROXY",
-          "description": "Set to 1 to skip the fetchproxy browser-extension fallback (missing creds become a hard error — useful in headless CI).",
+          "description": "Set to 1 to skip the fetchproxy browser-extension fallback (missing creds become a hard error \u2014 useful in headless CI).",
           "isRequired": false,
           "format": "string"
         }

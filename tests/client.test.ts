@@ -571,6 +571,44 @@ describe('SignUpGeniusClient — fetchproxy session (lazy lift + renewal)', () =
   });
 });
 
+describe('SignUpGeniusClient.deletePerson (slot release)', () => {
+  // Release is a plain GET navigation in the wizard, not a SUGboxAPI JSON
+  // action — the server answers with HTML and a redirect back to the sheet.
+  it('GETs s.DeletePerson with id/imid/mid and no JSON Accept', async () => {
+    const spy = mockFetch({ status: 302, rawBody: '' });
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: async () => ({ accessToken: 'JWT', cookieHeader: 'cfid=1' }) });
+    await client.deletePerson(62393618, 1381103237, 4262737);
+    const url = spy.mock.calls[0]![0] as string;
+    expect(url).toContain('/index.cfm?go=s.DeletePerson');
+    expect(url).toContain('id=62393618');
+    expect(url).toContain('imid=1381103237');
+    expect(url).toContain('mid=4262737');
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe('GET');
+    expect(init.redirect).toBe('manual');
+    expect((init.headers as Record<string, string>).Accept).toBe('text/html');
+  });
+
+  it('accepts a 200 as success', async () => {
+    mockFetch({ status: 200, rawBody: '<html>ok</html>' });
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: async () => ({ accessToken: 'JWT', cookieHeader: 'cfid=1' }) });
+    await expect(client.deletePerson(1, 2, 3)).resolves.toBeUndefined();
+  });
+
+  it('throws an actionable error on a 4xx/5xx', async () => {
+    mockFetch({ status: 403, rawBody: '' });
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: async () => ({ accessToken: 'JWT', cookieHeader: 'cfid=1' }) });
+    await expect(client.deletePerson(62393618, 999, 4262737)).rejects.toThrow(
+      /Releasing slot entry 999 .* status 403/,
+    );
+  });
+
+  it('refuses in key mode', async () => {
+    const client = new SignUpGeniusClient(keyAccount);
+    await expect(client.deletePerson(1, 2, 3)).rejects.toBeInstanceOf(ModeMismatchError);
+  });
+});
+
 describe('SignUpGeniusClient — degraded mode (no account configured)', () => {
   const bootstrapError = new Error('Missing SignUpGenius auth config. Set …');
   const newDegradedClient = () => new SignUpGeniusClient(null, { configError: bootstrapError });

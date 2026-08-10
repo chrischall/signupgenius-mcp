@@ -1,35 +1,43 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { textContent } from './_shared.js';
+import {
+  legacyPost,
+  htmlToParagraphs,
+  htmlToText,
+  type Fetcher,
+  type FetchResponseLike,
+  type FetchInitLike,
+} from './sug-legacy.js';
+
+export type { Fetcher, FetchResponseLike, FetchInitLike };
 
 /**
- * Public-signup tool.
+ * Public sign-up metadata — `POST /SUGboxAPI.cfm?go=s.getSignupInfo`.
  *
- * Any SignUpGenius sign-up has a public URL of the shape
- * `https://www.signupgenius.com/go/<urlid>-<signupid>[-<vanity>]`. The page
- * itself is server-rendered HTML — there is no JSON surface that returns the
- * same data, so this tool fetches the page and scrapes the well-known
- * landmarks (`h1.SUGHeaderText`, the Date/Time/Location strong tags, the RSVP
- * Responses table) into a structured envelope.
+ * This tool used to scrape the `/go/` page HTML. That stopped working: the
+ * modern page is a pure Angular shell whose served markup contains no sheet
+ * content at all — no `h1.SUGHeaderText`, no Date/Time/Location landmarks, and
+ * a constant `<title>Sign Me Up</title>`. The scraper therefore returned a stub
+ * ("Sign Me Up", empty description) for every current sheet.
  *
- * No SignUpGenius credentials are required: the /go/ URL is publicly viewable
- * by anyone with the link. This is why the tool is registered unconditionally
- * in `src/index.ts`, even when `resolveAuth()` produced a deferred config
- * error. Behind the scenes the tool calls `globalThis.fetch` directly — it
- * does NOT route through `SignUpGeniusClient`, since the client is tied to
- * the v2/v3 JSON envelopes.
+ * The replacement is the JSON call the SPA itself makes. Verified live on
+ * 2026-08-10 against sign-up 62393618:
+ *
+ *   - It needs NO authentication. A cold `curl` with an empty cookie jar
+ *     returns the identical 10 KB envelope that the signed-in browser gets
+ *     (10048 vs 10075 bytes — the delta is theme/ad noise, not sheet data).
+ *   - It needs NO `s.PreProcessSignup` priming and NO prior `/go/` GET. All
+ *     three orderings (cold, after-GET, after-preprocess) return byte-identical
+ *     DATA, so this is a single request, not the documented 3-step dance.
+ *
+ * What it does NOT carry is slots — the sheet's rows live on a different
+ * endpoint entirely (see slots.ts). `getSignupInfo` is metadata only, in both
+ * anonymous and authenticated modes.
  */
 
-/** Minimum surface of a fetch response we use — `text()` + status. */
-export interface FetchResponseLike {
-  ok: boolean;
-  status: number;
-  text(): Promise<string>;
-}
-export type Fetcher = (url: string) => Promise<FetchResponseLike>;
-
 export interface SignUpUrlParts {
-  /** The full slug, e.g. `10C054DA9AF2BA0FEC07-63774883-myers`. */
+  /** The full slug, e.g. `10C0849AAAA2EA4FD0-62393618-20262027`. */
   urlid: string;
   /** The numeric sign-up ID from the middle segment. */
   signupid: number;
@@ -39,27 +47,88 @@ export interface SignUpUrlParts {
   href: string;
 }
 
+/** The subset of the `s.getSignupInfo` DATA payload this tool surfaces. */
+export interface RawSignupInfo {
+  id?: number;
+  urlid?: string;
+  title?: string;
+  description?: string;
+  fullurl?: string;
+  community?: string;
+  communityid?: number;
+  listType?: string;
+  listformat?: string;
+  contactname?: string;
+  ownerfirst?: string;
+  ownerlast?: string;
+  owneremail?: string;
+  owner?: number;
+  datecreated?: string;
+  datemodified?: string;
+  tzshort?: string;
+  useRSVP?: number;
+  showRSVP?: number;
+  accountRequired?: number;
+  emailrequired?: number;
+  commentRequired?: number;
+  hascustomfields?: boolean;
+  customfields?: RawCustomField[];
+  hideslotsbefore?: string;
+  hideslotsafter?: string;
+  shownames?: number;
+  signupimage?: string;
+}
+
+interface RawCustomField {
+  fieldtype?: string;
+  fieldname?: string;
+  required?: boolean;
+  fieldorder?: number;
+  /**
+   * Option list for Select-style fields. SignUpGenius emits this array with
+   * INCONSISTENT key casing — observed live, the placeholder row uses
+   * lower-case (`optionname`/`optionval`) while every real choice after it
+   * uses upper-case (`OPTIONNAME`/`OPTIONVAL`). Reading only one casing
+   * silently drops the actual options, so both are accepted.
+   */
+  fieldvalues?: Array<Record<string, unknown>>;
+}
+
+export interface CustomFieldSummary {
+  /** e.g. `PhoneType`, `Phone`, `Text` — the wire `fieldtype`. */
+  type: string;
+  /** Human label when the sheet supplies one. */
+  name?: string;
+  required: boolean;
+  /** Select-style fields advertise their options; free-text fields do not. */
+  options?: string[];
+}
+
 export interface SignUpDetails {
   urlid: string;
   signupid: number;
   vanity?: string;
   url: string;
   title: string;
-  organization?: string;
-  date?: string;
-  time?: string;
-  location?: string;
+  /** Plain-text paragraphs, converted from the stored rich-text HTML. */
   description: string[];
-  /** og:image — the sheet's banner/creator image, when the page advertises one. */
-  image?: string;
+  organization?: string;
+  organizationId?: number;
+  category?: string;
+  format?: string;
   creator?: string;
-  responses?: {
-    yes?: number;
-    no?: number;
-    maybe?: number;
-    confirmedGuests?: number;
-    maybeGuests?: number;
-  };
+  creatorEmail?: string;
+  creatorId?: number;
+  timezone?: string;
+  created?: string;
+  modified?: string;
+  /** True for Yes/No/Maybe sheets; false for slot-based ones. */
+  isRsvp: boolean;
+  /** True when SignUpGenius requires an account to sign up. */
+  accountRequired: boolean;
+  /** Fields a participant must supply when claiming a slot. */
+  customFields?: CustomFieldSummary[];
+  image?: string;
 }
 
 const inputSchema = z.object({
@@ -110,373 +179,114 @@ function extractSlug(input: string): string {
   return input;
 }
 
-/** Scrape the public /go/ page HTML into a structured envelope. */
-export function extractSignUpDetails(html: string, parts: SignUpUrlParts): SignUpDetails {
+/** Fetch the raw `s.getSignupInfo` DATA payload. No auth required. */
+export async function fetchSignupInfo(
+  fetcher: Fetcher,
+  urlid: string,
+): Promise<RawSignupInfo> {
+  return legacyPost<RawSignupInfo>(fetcher, 's.getSignupInfo', { urlid });
+}
+
+/** Map the raw envelope onto the tool's response shape. Pure / testable. */
+export function toSignUpDetails(raw: RawSignupInfo, parts: SignUpUrlParts): SignUpDetails {
   const out: SignUpDetails = {
     urlid: parts.urlid,
-    signupid: parts.signupid,
-    url: parts.href,
-    title: pickTitle(html),
-    description: extractDescription(html),
+    signupid: raw.id ?? parts.signupid,
+    url: raw.fullurl || parts.href,
+    title: htmlToText(raw.title ?? '') || 'Untitled sign-up',
+    description: htmlToParagraphs(raw.description ?? ''),
+    isRsvp: Number(raw.useRSVP) === 1,
+    accountRequired: Number(raw.accountRequired) === 1,
   };
   if (parts.vanity !== undefined) out.vanity = parts.vanity;
 
-  const image = ogTag(html, 'image');
-  if (image) out.image = image;
-
-  const organization = textOf(html, /<div class="SUGbold">([\s\S]*?)<\/div>/);
-  if (organization) out.organization = organization;
-
-  const date = textAfterStrong(html, 'Date');
-  if (date) out.date = date;
-
-  const time = textAfterStrong(html, 'Time');
-  if (time) out.time = time;
-
-  const location = textAfterStrong(html, 'Location');
-  if (location) out.location = location;
-
-  const creator = extractCreator(html);
+  const creator = joinName(raw.ownerfirst, raw.ownerlast) || raw.contactname;
   if (creator) out.creator = creator;
+  if (raw.owneremail) out.creatorEmail = raw.owneremail;
+  if (raw.owner !== undefined) out.creatorId = raw.owner;
 
-  const responses = extractResponses(html);
-  if (responses) out.responses = responses;
+  if (raw.community) out.organization = raw.community;
+  if (raw.communityid !== undefined) out.organizationId = raw.communityid;
+  if (raw.listType) out.category = raw.listType;
+  if (raw.listformat) out.format = raw.listformat;
+  if (raw.tzshort) out.timezone = raw.tzshort;
+  if (raw.datecreated) out.created = raw.datecreated;
+  if (raw.datemodified) out.modified = raw.datemodified;
+  // The theme block ships a bare directory when the sheet has no banner.
+  if (raw.signupimage && !/\/$/.test(raw.signupimage)) out.image = raw.signupimage;
+
+  const fields = toCustomFields(raw.customfields);
+  if (fields.length > 0) out.customFields = fields;
 
   return out;
 }
 
 /**
- * Read an Open Graph meta tag.
+ * Summarise the sheet's custom questions.
  *
- * The modern `/go/` page is a pure Angular shell: it carries no
- * `h1.SUGHeaderText`, no slot markup, and a generic `<title>Sign Me Up</title>`
- * regardless of User-Agent. Its `og:` block is the ONLY place the served HTML
- * names the actual sheet, so these tags are what keep the tool useful on
- * current sheets. Handles both attribute orders (`property` before or after
- * `content`) since the shell emits them inconsistently.
+ * These matter beyond display: a slot claim must echo every `required` field
+ * back or the CFML validator rejects the submission. The test sheet mandates
+ * `PhoneType` + `Phone`.
  */
-function ogTag(html: string, name: string): string | undefined {
-  const patterns = [
-    new RegExp(`<meta[^>]+property=["']og:${name}["'][^>]*content=["']([^"']*)["']`, 'i'),
-    new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*property=["']og:${name}["']`, 'i'),
-  ];
-  for (const re of patterns) {
-    const m = html.match(re);
-    if (m && m[1].trim()) return htmlToText(m[1]).trim();
-  }
-  return undefined;
+export function toCustomFields(raw: RawCustomField[] | undefined): CustomFieldSummary[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((f) => {
+    const summary: CustomFieldSummary = {
+      type: f.fieldtype ?? 'Text',
+      required: f.required === true,
+    };
+    if (f.fieldname) summary.name = f.fieldname;
+    // `fieldvalues` is an array for Select-style fields but an empty STRING
+    // for free-text ones (observed live on the Phone field), so it cannot be
+    // spread or filtered without this guard.
+    const values = Array.isArray(f.fieldvalues) ? f.fieldvalues : [];
+    const options = values
+      // Keep only rows with a real submit value: the leading row is a
+      // "Select Type" placeholder whose value is empty and which is not a
+      // legal answer.
+      .filter((v) => String(pick(v, 'optionval') ?? '').length > 0)
+      .map((v) => pick(v, 'optionname'))
+      .filter((n): n is string => typeof n === 'string' && n.length > 0);
+    if (options.length > 0) summary.options = options;
+    return summary;
+  });
 }
 
-function pickTitle(html: string): string {
-  // Server-rendered h1 wins when a legacy page still provides it; otherwise
-  // og:title, which beats <title> because the shell's <title> is the useless
-  // constant "Sign Me Up".
-  const h1 = textOf(html, /<h1 class="SUGHeaderText">([\s\S]*?)<\/h1>/);
-  if (h1) return h1;
-  const og = ogTag(html, 'title');
-  if (og) return og;
-  const t = textOf(html, /<title>([\s\S]*?)<\/title>/i);
-  if (t) return t;
-  return 'Untitled sign-up';
+/** Read a key from a case-inconsistent wire object. */
+function pick(obj: Record<string, unknown>, key: string): string | undefined {
+  const hit = Object.entries(obj).find(([k]) => k.toLowerCase() === key);
+  return hit && typeof hit[1] === 'string' ? hit[1] : undefined;
 }
 
-function extractDescription(html: string): string[] {
-  const paras = extractParagraphDescription(html);
-  if (paras.length > 0) return paras;
-  // Angular-shell page: no <p> block to scrape. og:description is the only
-  // prose the server actually sends.
-  const og = ogTag(html, 'description');
-  return og ? [og] : [];
+function joinName(first?: string, last?: string): string {
+  return [first, last].filter((p) => typeof p === 'string' && p.trim().length > 0).join(' ').trim();
 }
 
-function extractParagraphDescription(html: string): string[] {
-  const m = html.match(/<h1 class="SUGHeaderText">[\s\S]*?<\/h1>([\s\S]*?)<strong>Date/);
-  if (!m) return [];
-  const paragraphs: string[] = [];
-  const re = /<p[^>]*>([\s\S]*?)<\/p>/g;
-  let p: RegExpExecArray | null;
-  while ((p = re.exec(m[1])) !== null) {
-    const text = htmlToText(p[1]).trim();
-    if (text) paragraphs.push(text);
-  }
-  return paragraphs;
-}
-
-function extractCreator(html: string): string | undefined {
-  // The creator's name appears in the `<table class="creator-info">` block,
-  // in the <td> immediately after the profile-pic cell.
-  const block = html.match(/<table class="creator-info">[\s\S]*?<\/table>/);
-  if (!block) return undefined;
-  // Last <td> in the row that contains text other than the "Created by:" label.
-  const tds = [...block[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) =>
-    htmlToText(m[1]).trim(),
-  );
-  for (const td of tds) {
-    if (!td) continue;
-    if (/^created by:?$/i.test(td)) continue;
-    return td;
-  }
-  return undefined;
-}
-
-function extractResponses(html: string): SignUpDetails['responses'] {
-  const yesNoMaybe = html.match(/Yes:\s*(\d+)[\s\S]{0,80}?No:\s*(\d+)[\s\S]{0,80}?Maybe:\s*(\d+)/);
-  if (!yesNoMaybe) return undefined;
-  const responses: NonNullable<SignUpDetails['responses']> = {
-    yes: Number(yesNoMaybe[1]),
-    no: Number(yesNoMaybe[2]),
-    maybe: Number(yesNoMaybe[3]),
-  };
-  const guests = html.match(/Confirmed:\s*(\d+)[\s\S]{0,80}?Maybe:\s*(\d+)/);
-  if (guests) {
-    responses.confirmedGuests = Number(guests[1]);
-    responses.maybeGuests = Number(guests[2]);
-  }
-  return responses;
-}
-
-function textAfterStrong(html: string, label: string): string | undefined {
-  // Matches `<strong>Date: </strong>05/21/2026 (Thu.)` and similar — captures
-  // until the next tag or stretch of whitespace+newline+tag.
-  const re = new RegExp(`<strong>\\s*${label}\\s*:?\\s*</strong>([\\s\\S]*?)(?=<(?!br)|$)`, 'i');
-  const m = html.match(re);
-  if (!m) return undefined;
-  const value = htmlToText(m[1]).trim();
-  return value || undefined;
-}
-
-function textOf(html: string, re: RegExp): string | undefined {
-  const m = html.match(re);
-  if (!m) return undefined;
-  const value = htmlToText(m[1]).trim();
-  return value || undefined;
-}
-
-function htmlToText(s: string): string {
-  return s
-    .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/\s+/g, ' ');
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Slot listing — GET /v3/signups/{id}/slots
-// ────────────────────────────────────────────────────────────────────────────
-//
-// This endpoint is fully UNAUTHENTICATED. Verified 2026-08-02 against sign-up
-// 62393618: the response is byte-identical with and without a valid session,
-// and sending a *bogus* Authorization header returns 500 — so it must be
-// called clean, exactly like the /go/ page fetch above.
-//
-// It is also the only read path for slots on a sheet the user does not own.
-// The Pro `/signups/report/{all,filled,available}` endpoints are both key-only
-// AND owner-scoped, so a Pro key is not a workaround for someone else's sheet.
-// What this endpoint does NOT carry is per-participant identity on
-// `hidenames` slots, or custom-question answers — those stay owner-only.
-
-const SLOTS_BASE = 'https://api.signupgenius.com/v3/signups';
-
-const slotsInput = z.object({
-  url: z
-    .string()
-    .min(1)
-    .describe(
-      'A SignUpGenius sign-up URL, its slug (`<urlid>-<signupid>[-<vanity>]`), ' +
-        'or just the numeric sign-up id.',
-    ),
-});
-
-export interface SlotItemSummary {
-  slot: string;
-  slotid: number;
-  slotitemid: number;
-  starttime: string | null;
-  endtime: string | null;
-  location?: string;
-  limit: number | null;
-  taken: number;
-  remaining: number | null;
-  unlimited: boolean;
-  state?: string;
-  /**
-   * The slot's `hidenames` display setting, as reported by the API — an OWNER
-   * preference, not a permission boundary, and NOT a guarantee about
-   * `participants` below. Surfaced so a caller can explain an empty
-   * participant list without implying they lack access.
-   */
-  hidenames: boolean;
-  /**
-   * Participant names exactly as the endpoint returned them, omitted when it
-   * returned none. Deliberately NOT filtered by `hidenames`: this is a
-   * pass-through of a public endpoint, and second-guessing it would hide data
-   * the API chose to publish. On the sheets observed during recon a
-   * `hidenames` slot returned an empty list, but that is the server's
-   * behavior to enforce, not this tool's to simulate.
-   */
-  participants?: string[];
-}
-
-interface RawSlotsEnvelope {
-  success?: boolean;
-  message?: string[];
-  data?: { slots?: RawSlot[] };
-}
-interface RawSlot {
-  slotid?: number;
-  title?: string;
-  hidenames?: boolean;
-  slotitems?: RawSlotItem[];
-}
-interface RawSlotItem {
-  slotitemid?: number;
-  quantity?: {
-    limit?: number | null;
-    taken?: number;
-    remaining?: number | null;
-    unlimited?: boolean;
-  };
-  availability?: { state?: string };
-  participants?: { itemmembers?: Array<{ name?: string }> };
-  date?: {
-    starttime?: string | null;
-    endtime?: string | null;
-    location?: { name?: string | null; displaytext?: string | null } | null;
-  } | null;
-}
-
-/** Resolve the numeric sign-up id from a URL, a slug, or a bare id. */
-export function resolveSignUpId(input: string): number {
-  const trimmed = input.trim();
-  if (/^\d+$/.test(trimmed)) return Number(trimmed);
-  return parseSignUpUrl(trimmed).signupid;
-}
-
-/** Flatten the v3 slots envelope into a caller-friendly slot-item list. */
-export function extractSlotItems(raw: RawSlotsEnvelope): SlotItemSummary[] {
-  const out: SlotItemSummary[] = [];
-  for (const slot of raw.data?.slots ?? []) {
-    const hidenames = slot.hidenames === true;
-    for (const item of slot.slotitems ?? []) {
-      const q = item.quantity ?? {};
-      const summary: SlotItemSummary = {
-        slot: slot.title ?? '(untitled slot)',
-        slotid: slot.slotid ?? 0,
-        slotitemid: item.slotitemid ?? 0,
-        starttime: item.date?.starttime ?? null,
-        endtime: item.date?.endtime ?? null,
-        limit: q.limit ?? null,
-        taken: q.taken ?? 0,
-        remaining: q.remaining ?? null,
-        unlimited: q.unlimited === true,
-        hidenames,
-      };
-      const loc = item.date?.location;
-      const locText = loc?.displaytext ?? loc?.name ?? undefined;
-      if (locText) summary.location = locText;
-      if (item.availability?.state) summary.state = item.availability.state;
-      const names = (item.participants?.itemmembers ?? [])
-        .map((m) => m.name)
-        .filter((n): n is string => typeof n === 'string' && n.length > 0);
-      if (names.length > 0) summary.participants = names;
-      out.push(summary);
-    }
-  }
-  return out;
-}
-
-export function registerPublicSignUpTools(
+export function registerPublicSignUpTool(
   server: McpServer,
-  fetcher: Fetcher = (url) => globalThis.fetch(url),
+  fetcher: Fetcher = (url, init) => globalThis.fetch(url, init),
 ): void {
-  server.registerTool(
-    'signupgenius_get_signup_slots',
-    {
-      description:
-        'List the SLOTS (dates, times, locations, and how many spots are taken/remaining) ' +
-        'for any public SignUpGenius sign-up, given its URL, slug, or numeric id. ' +
-        'Requires NO auth and works for sheets the user did not create — use this ' +
-        'instead of signupgenius_report_* whenever you need slot availability. ' +
-        'Participant names appear only when the endpoint publishes them; each item ' +
-        'reports the slot\'s `hidenames` display setting so an empty list can be ' +
-        'explained without implying missing access.',
-      annotations: { readOnlyHint: true, openWorldHint: true },
-      inputSchema: slotsInput.shape,
-    },
-    async (rawArgs) => {
-      const args = slotsInput.parse(rawArgs);
-      const signupid = resolveSignUpId(args.url);
-      const url = `${SLOTS_BASE}/${signupid}/slots`;
-      // Called with NO second argument on purpose: a bogus Authorization
-      // header makes this endpoint 500, and a valid one changes nothing.
-      const res = await fetcher(url);
-      if (res.status === 404) {
-        throw new Error(
-          `SignUpGenius has no sign-up with id ${signupid} (404). ` +
-            'Check the slug — the id is the middle segment of a /go/ link.',
-        );
-      }
-      if (!res.ok) {
-        throw new Error(`SignUpGenius returned HTTP ${res.status} for ${url}`);
-      }
-      const body = await res.text();
-      let parsed: RawSlotsEnvelope;
-      try {
-        parsed = JSON.parse(body) as RawSlotsEnvelope;
-      } catch {
-        throw new Error(`SignUpGenius returned a non-JSON body for ${url}`);
-      }
-      if (parsed.success !== true) {
-        const msg = (parsed.message ?? []).join('; ');
-        throw new Error(`SignUpGenius error listing slots: ${msg || 'unknown'}`);
-      }
-      const items = extractSlotItems(parsed);
-      return textContent({
-        signupid,
-        source: url,
-        slotCount: items.length,
-        // Only finite items contribute. An unlimited item has no `remaining`,
-        // and folding it in as 0 made an all-unlimited sheet report
-        // `totalRemaining: 0` — which reads as "full" when it is the opposite.
-        // `unlimitedSlots` carries what the sum structurally cannot.
-        totalRemaining: items
-          .filter((i) => !i.unlimited)
-          .reduce((n, i) => n + (i.remaining ?? 0), 0),
-        unlimitedSlots: items.filter((i) => i.unlimited).length,
-        items,
-      });
-    },
-  );
-
   server.registerTool(
     'signupgenius_get_public_signup',
     {
       description:
         'Look up a SignUpGenius sign-up by its public URL or slug ' +
         '(e.g. `https://www.signupgenius.com/go/<urlid>-<signupid>-<vanity>`). ' +
-        'Fetches the rendered page and returns a structured envelope: ' +
-        'title, organization, date, time, location, description, creator, and ' +
-        'RSVP response counts (when present). Requires no SignUpGenius auth — ' +
-        'works even when the server has no API credentials configured. Use this ' +
-        'when the user pastes a sign-up link and asks what it is or when it is.',
+        'Returns the real sheet metadata: title, description, organization, ' +
+        'category, creator + contact email, timezone, created/modified dates, ' +
+        'whether it is an RSVP or slot-based sheet, and which custom fields a ' +
+        'participant must supply to sign up. Requires NO SignUpGenius auth and ' +
+        'works for sheets the user did not create. Use signupgenius_list_slots ' +
+        'for the actual dates/times and availability — this tool returns ' +
+        'metadata only.',
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: inputSchema.shape,
     },
     async (raw) => {
       const args = inputSchema.parse(raw);
       const parts = parseSignUpUrl(args.url);
-      const res = await fetcher(parts.href);
-      if (!res.ok) {
-        throw new Error(`SignUpGenius returned HTTP ${res.status} for ${parts.href}`);
-      }
-      const html = await res.text();
-      return textContent(extractSignUpDetails(html, parts));
+      const info = await fetchSignupInfo(fetcher, parts.urlid);
+      return textContent(toSignUpDetails(info, parts));
     },
   );
 }

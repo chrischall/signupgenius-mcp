@@ -266,6 +266,45 @@ export class SignUpGeniusClient {
     }
   }
 
+  /**
+   * Withdraw a sign-up entry — `GET /index.cfm?go=s.DeletePerson`.
+   *
+   * This is NOT a SUGboxAPI JSON action. In the wizard (`d.deleteSignUp` in
+   * `/dist/js/signups/signup.min.js`) "remove me from this slot" is a plain
+   * browser navigation:
+   *
+   *     g.location.href = "/index.cfm?go=s.DeletePerson&id=" + signupid
+   *                     + "&imid=" + objForm.imid + "&mid=" + user.memberid
+   *
+   * so it answers with an HTML page, not JSON. `s.deleteItemMember` — the other
+   * plausible-looking action in the same bundle — is the OWNER's path, fired by
+   * the admin modal that removes somebody else from a slot; it is not what a
+   * participant giving up their own slot calls.
+   *
+   * Session mode only. A non-2xx/3xx status is surfaced rather than swallowed,
+   * since the dispatcher answers 200 on success and redirects back to the sheet.
+   */
+  async deletePerson(signupId: number, itemMemberId: number, memberId: number): Promise<void> {
+    this.requireMode('session', 'releasing a slot');
+    const acct = this.requireAccount() as Extract<Account, { mode: 'session' }>;
+    const url =
+      `${acct.legacyBaseUrl}/index.cfm?go=s.DeletePerson&id=${encodeURIComponent(String(signupId))}` +
+      `&imid=${encodeURIComponent(String(itemMemberId))}&mid=${encodeURIComponent(String(memberId))}`;
+    const res = await this.session!.withSession((session) =>
+      fetch(url, {
+        method: 'GET',
+        redirect: 'manual',
+        headers: { ...sessionAuthHeaders(session), Accept: 'text/html' },
+      }),
+    );
+    if (res.status >= 400) {
+      throw new Error(
+        `Releasing slot entry ${itemMemberId} on sign-up ${signupId} returned status ${res.status}. ` +
+          'The entry may already be removed, belong to someone else, or the sign-up may be locked.',
+      );
+    }
+  }
+
   private async requestApi<T>(path: string, opts: RequestOpts): Promise<ApiResponse<T>> {
     const acct = this.requireAccount();
     const normalizedPath = path.endsWith('/') ? path : `${path}/`;
@@ -424,7 +463,10 @@ export class KeyModeRequiredError extends McpToolError {
   private static readonly HINT =
     'Set SIGNUPGENIUS_USER_KEY (a SignUpGenius Pro API key). Signing into signupgenius.com in your ' +
     'browser cannot enable this — slot reports exist only on the Pro v2/k API, which uses a ' +
-    'different auth scheme than the browser session.';
+    'different auth scheme than the browser session. Note a Pro key is ALSO owner-scoped: it ' +
+    'reports on sheets the key-holder created, not on someone else\'s. To read slots, dates and ' +
+    'availability on any sign-up — including one the user merely participates in — use ' +
+    'signupgenius_list_slots, which needs no auth at all.';
 
   constructor(featureLabel: string, configError?: Error | null) {
     super(

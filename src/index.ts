@@ -15,8 +15,10 @@ import { registerUserTools } from './tools/user.js';
 import { registerGroupTools } from './tools/groups.js';
 import { registerSignUpTools } from './tools/signups.js';
 import { registerReportTools } from './tools/reports.js';
-import { registerPublicSignUpTools } from './tools/public-signup.js';
+import { registerPublicSignUpTool } from './tools/public-signup.js';
+import { registerSlotTools } from './tools/slots.js';
 import { registerRsvpTool } from './tools/rsvp.js';
+import { registerSlotWriteTools } from './tools/slot-write.js';
 
 // Defer auth errors to tool-call time so the server still starts cleanly
 // when env vars are missing (e.g. during the host's install-time smoke test,
@@ -65,7 +67,9 @@ await runMcp({
     (server, c) => registerGroupTools(server, c),
     (server, c) => registerSignUpTools(server, c),
     (server, c) => registerReportTools(server, c),
-    (server) => registerPublicSignUpTools(server),
+    (server) => registerPublicSignUpTool(server),
+    (server) => registerSlotTools(server),
     (server, c) => registerRsvpTool(server, c),
+    (server, c) => registerSlotWriteTools(server, c),
   ],
 });

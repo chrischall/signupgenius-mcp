@@ -2,7 +2,7 @@
   "dxt_version": "0.1",
   "name": "signupgenius-mcp",
   "version": "1.3.1",
-  "description": "SignUpGenius MCP — read sign-ups, slot reports, and groups; add group members. Three auth paths: Pro API key, email/password, or sign in via the fetchproxy browser extension.",
+  "description": "SignUpGenius MCP \u2014 read sign-ups, slots and groups, RSVP, and claim or release slots. Three auth paths: Pro API key, email/password, or sign in via the fetchproxy browser extension.",
   "author": {
     "name": "Claude Code (AI)"
   },
@@ -25,20 +25,20 @@
     "signupgenius_email": {
       "type": "string",
       "title": "Email (session mode)",
-      "description": "SignUpGenius login email. Pair with the password below to enable session mode — works on free accounts and supports every tool except slot reports. Direct email/password accounts only (no Google/Apple/Facebook/Microsoft SSO, no 2FA). Leave blank to use the fetchproxy browser extension instead.",
+      "description": "SignUpGenius login email. Pair with the password below to enable session mode \u2014 works on free accounts and supports every tool except slot reports. Direct email/password accounts only (no Google/Apple/Facebook/Microsoft SSO, no 2FA). Leave blank to use the fetchproxy browser extension instead.",
       "required": false
     },
     "signupgenius_password": {
       "type": "string",
       "title": "Password (session mode)",
-      "description": "SignUpGenius password. Required only when the email above is set. Stored locally in the bundle config — keep it private.",
+      "description": "SignUpGenius password. Required only when the email above is set. Stored locally in the bundle config \u2014 keep it private.",
       "required": false,
       "sensitive": true
     },
     "signupgenius_user_key": {
       "type": "string",
       "title": "Pro API key (key mode)",
-      "description": "SignUpGenius API key from Pro Tools > API Management. Required ONLY for the slot REPORT tools (filled/available/all participants) — those need a Pro subscription. If both this and email/password are set, the key wins.",
+      "description": "SignUpGenius API key from Pro Tools > API Management. Required ONLY for the slot REPORT tools (filled/available/all participants) \u2014 those need a Pro subscription. If both this and email/password are set, the key wins.",
       "required": false,
       "sensitive": true
     }
@@ -66,39 +66,59 @@
     },
     {
       "name": "signupgenius_list_created_active",
-      "description": "List active sign-ups you've created"
+      "description": "List active sign-ups created by the user"
     },
     {
       "name": "signupgenius_list_created_expired",
-      "description": "List expired sign-ups you've created"
+      "description": "List expired sign-ups created by the user"
     },
     {
       "name": "signupgenius_list_created_all",
-      "description": "List all sign-ups you've created"
+      "description": "List all sign-ups created by the user"
     },
     {
       "name": "signupgenius_list_invited",
-      "description": "List sign-ups you're invited to"
+      "description": "List sign-ups the user was invited to"
     },
     {
       "name": "signupgenius_list_signedupfor",
-      "description": "List sign-ups you've signed up for"
+      "description": "List sign-ups the user has signed up for"
     },
     {
       "name": "signupgenius_legacy_get_my_signups",
-      "description": "Session mode: list sign-ups via the SignUpGenius wizard's own endpoint"
+      "description": "List the user's sign-ups via the legacy wizard API (session mode)"
     },
     {
       "name": "signupgenius_report_all",
-      "description": "Full report (filled + open slots) for a sign-up (Pro key)"
+      "description": "Full slot report for a sign-up (Pro key, owner-scoped)"
     },
     {
       "name": "signupgenius_report_filled",
-      "description": "Report restricted to filled slots (Pro key)"
+      "description": "Filled-slot report for a sign-up (Pro key, owner-scoped)"
     },
     {
       "name": "signupgenius_report_available",
-      "description": "Report restricted to open slots (Pro key)"
+      "description": "Available-slot report for a sign-up (Pro key, owner-scoped)"
+    },
+    {
+      "name": "signupgenius_get_public_signup",
+      "description": "Look up any public sign-up's metadata by URL \u2014 no auth required"
+    },
+    {
+      "name": "signupgenius_list_slots",
+      "description": "List slots, availability and participants on any public sign-up \u2014 no auth required"
+    },
+    {
+      "name": "signupgenius_rsvp",
+      "description": "RSVP yes/no/maybe to a headcount sign-up (write, confirm first)"
+    },
+    {
+      "name": "signupgenius_claim_slot",
+      "description": "Claim a slot on a slot-based sign-up (write, requires confirm:true)"
+    },
+    {
+      "name": "signupgenius_release_slot",
+      "description": "Withdraw a slot the user signed up for (write, requires confirm:true)"
     }
   ]
 }
