@@ -27,7 +27,7 @@ Set `SIGNUPGENIUS_DISABLE_FETCHPROXY=1` to opt out of the fallback (turns missin
 
 Notes on session-mode sign-up listings: the v3 endpoints `signups/created`, `signups/invited`, and `signups/signedupfor` return the full list in one paginated call (no separate active/expired URLs). The three `signupgenius_list_created_*` tools all map to the same endpoint in session mode; filter by `enddate` client-side. The bonus `signupgenius_legacy_get_my_signups` calls the same backend the SignUpGenius wizard itself uses and sometimes returns fuller data.
 
-Reports in session mode fail fast with a clear `ModeMismatchError` telling the user to set `SIGNUPGENIUS_USER_KEY`.
+Reports outside key mode fail fast with a `KeyModeRequiredError` naming the tool, the mode required and the mode in effect, telling the user to set `SIGNUPGENIUS_USER_KEY` — and pointing at `signupgenius_list_slots`, which answers slot availability for any sheet with no auth at all.
 
 ## Configuration
 

@@ -9,10 +9,11 @@ const reportArgs = z.object({
 
 /**
  * Report endpoints are Pro-only AND owner-scoped. We still register the tools
- * so Claude knows they exist, but in session mode they fail fast with the
- * shared ModeMismatchError, whose hint says "Switch to key mode to use
- * {tool}." — the SIGNUPGENIUS_USER_KEY pointer lives in each tool's
- * description below.
+ * so Claude knows they exist, but outside key mode they fail fast with
+ * `KeyModeRequiredError` — thrown unconditionally by `requireKeyMode`, in
+ * every mode and whether or not config resolved. It names the tool, the mode
+ * required and the mode in effect, says that key mode means a paid
+ * SIGNUPGENIUS_USER_KEY, and points at `signupgenius_list_slots`.
  *
  * These are NOT the general answer to "what slots are open?". A Pro key only
  * reports on sheets its holder created, so it cannot serve the common
