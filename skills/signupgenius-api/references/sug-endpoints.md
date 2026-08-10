@@ -398,6 +398,15 @@ Get `imid` from `itemmemberid` in `s.getSignUpParticipantsBySlotItem`.
 `s.deleteItemMember` looks like the obvious candidate but is the **owner's**
 path — the admin modal that removes somebody else from a slot.
 
+Two traps on this call. It answers HTML, and a **lapsed ColdFusion session
+redirects (3xx) to `go=c.Login`** rather than returning an error status — so a
+"did it work?" check on the status code alone reports a failed withdrawal as a
+success. Check the redirect destination, and re-read the slot to confirm the
+entry is gone. And because the participants endpoint publishes every
+`itemmemberid` **and** `memberid` publicly, confirm the entry belongs to the
+signed-in member before sending anything; the session profile reports that id
+as `id`, not `memberid`.
+
 > **Verification status.** Every READ above was exercised live. The two writes
 > in this section were reverse-engineered but deliberately **not** executed,
 > to avoid claiming and withdrawing a slot on a real sheet. Treat the claim
