@@ -101,7 +101,7 @@ Modes can be combined; Pro key wins where it applies, session/fetchproxy handles
 
 These need `SIGNUPGENIUS_USER_KEY` **and** answer only for sign-ups the key holder created — a Pro key is not a workaround for someone else's sheet. Use `signupgenius_list_slots` for availability *and* participant names on any sheet; the reports add only what it cannot carry: custom-question answers.
 
-Session-mode users hit a fast `ModeMismatchError` (or `KeyModeRequiredError` when auth is unconfigured) with a clear instruction to set `SIGNUPGENIUS_USER_KEY`.
+Outside key mode these fail fast with a `KeyModeRequiredError` naming the tool, the mode required and the mode in effect, and instructing the user to set `SIGNUPGENIUS_USER_KEY`.
 
 ## Trigger examples
 
