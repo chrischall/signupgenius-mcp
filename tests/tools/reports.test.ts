@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { setupTools, sessionAccount } from './_setup.js';
 import { registerReportTools } from '../../src/tools/reports.js';
-import { ModeMismatchError } from '../../src/client.js';
+import { KeyModeRequiredError } from '../../src/client.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -25,12 +25,25 @@ describe.each(cases)('key mode: %s', (toolName, path) => {
 });
 
 describe.each(cases.map(([t]) => t))('session mode rejection: %s', (toolName) => {
-  it('throws ModeMismatchError hinting the user to switch to key mode', async () => {
+  it('names the tool, the mode required and the mode in effect', async () => {
     const { handlers } = setupTools(registerReportTools, sessionAccount);
     const invoke = () => handlers.get(toolName)!({ signupId: 1 });
-    await expect(invoke()).rejects.toBeInstanceOf(ModeMismatchError);
-    await expect(invoke()).rejects.toMatchObject({
-      hint: `Switch to key mode to use ${toolName}.`,
-    });
+    await expect(invoke()).rejects.toBeInstanceOf(KeyModeRequiredError);
+    await expect(invoke()).rejects.toThrow(
+      new RegExp(`${toolName} requires Pro key mode but the server is running in session mode`),
+    );
+  });
+
+  it('says a Pro key is needed and points at the tool that actually works', async () => {
+    // "Switch to key mode" alone sent users looking for a setting. Key mode
+    // means a paid API key, and reports are owner-scoped either way — so the
+    // message has to name signupgenius_list_slots.
+    const { handlers } = setupTools(registerReportTools, sessionAccount);
+    const err = await handlers
+      .get(toolName)!({ signupId: 1 })
+      .catch((e: Error) => e);
+    expect(err.message).toContain('SIGNUPGENIUS_USER_KEY');
+    expect(err.message).toContain('owner-scoped');
+    expect(err.message).toContain('signupgenius_list_slots');
   });
 });

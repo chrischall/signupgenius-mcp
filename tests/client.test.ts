@@ -690,7 +690,7 @@ describe('requireKeyMode with a resolved account', () => {
     expect(() => client.requireKeyMode('signupgenius_report_all')).not.toThrow();
   });
 
-  it('still throws ModeMismatchError in session mode (existing behavior)', () => {
+  it('throws KeyModeRequiredError in session mode, naming both modes', () => {
     const client = new SignUpGeniusClient({
       mode: 'session',
       name: 's',
@@ -700,7 +700,18 @@ describe('requireKeyMode with a resolved account', () => {
       email: 'a@b.c',
       password: 'pw',
     });
-    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(ModeMismatchError);
+    // Deliberately NOT the shared ModeMismatchError: "switch to key mode"
+    // does not tell the user that key mode means a paid Pro key, nor that
+    // reports are owner-scoped and so cannot serve someone else's sheet.
+    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(
+      KeyModeRequiredError,
+    );
+    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(
+      /requires Pro key mode but the server is running in session mode/,
+    );
+    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(
+      /signupgenius_list_slots/,
+    );
   });
 });
 

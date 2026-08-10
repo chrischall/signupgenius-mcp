@@ -208,22 +208,31 @@ export class SignUpGeniusClient {
   /**
    * Guard for features ONLY key mode can ever satisfy (the Pro slot reports).
    *
-   * Why this exists instead of just calling `requireMode('key', …)`:
-   * `requireMode` calls `requireAccount()` first, so when config resolution was
-   * deferred the stored `configError` is what surfaces — and that error's
-   * remediation ("sign into signupgenius.com in your browser") can never
-   * enable a key-only feature. The user then chases a browser sign-in that
-   * cannot possibly fix the tool. Check the mode first so the requirement that
-   * actually applies leads, while keeping the config error visible in case it
-   * is itself a key-mode misconfiguration (e.g. a bad SIGNUPGENIUS_BASE_URL
-   * alongside a valid SIGNUPGENIUS_USER_KEY).
+   * Why this exists instead of `requireMode('key', …)`, which fails two ways:
+   *
+   *  - With config deferred, `requireMode` calls `requireAccount()` first, so
+   *    the stored `configError` surfaces — and its remediation ("sign into
+   *    signupgenius.com in your browser") can never enable a key-only feature.
+   *    The user chases a browser sign-in that cannot possibly fix the tool.
+   *  - With a resolved session account, it throws the shared
+   *    `ModeMismatchError`, whose "Switch to key mode" hint does not say that
+   *    key mode means a paid Pro API key, that reports are owner-scoped, or
+   *    what to use instead.
+   *
+   * So this always throws `KeyModeRequiredError`, naming the tool, the mode
+   * required and the mode in effect, and keeps the config error visible in
+   * case it is itself a key-mode misconfiguration (e.g. a bad
+   * SIGNUPGENIUS_BASE_URL alongside a valid SIGNUPGENIUS_USER_KEY).
    */
   requireKeyMode(featureLabel: string): void {
-    if (this.account) {
-      this.requireMode('key', featureLabel);
-      return;
-    }
-    throw new KeyModeRequiredError(featureLabel, this.configError);
+    if (this.account?.mode === 'key') return;
+    // Always KeyModeRequiredError, never the bare shared ModeMismatchError.
+    // The common failure is a user signed in via session/fetchproxy, and
+    // "switch to key mode" alone does not tell them that key mode means a
+    // paid Pro API key, nor that reports are owner-scoped and so cannot
+    // answer for someone else's sheet anyway. The hint carries both, plus
+    // the tool that actually works.
+    throw new KeyModeRequiredError(featureLabel, this.configError, this.account?.mode);
   }
 
   /**
@@ -468,9 +477,16 @@ export class KeyModeRequiredError extends McpToolError {
     'availability on any sign-up — including one the user merely participates in — use ' +
     'signupgenius_list_slots, which needs no auth at all.';
 
-  constructor(featureLabel: string, configError?: Error | null) {
+  constructor(
+    featureLabel: string,
+    configError?: Error | null,
+    /** The mode actually in effect, when an account did resolve. */
+    currentMode?: Account['mode'],
+  ) {
     super(
-      `${featureLabel} requires Pro key mode. ${KeyModeRequiredError.HINT}` +
+      `${featureLabel} requires Pro key mode` +
+        (currentMode ? ` but the server is running in ${currentMode} mode` : '') +
+        `. ${KeyModeRequiredError.HINT}` +
         (configError ? ` (auth is also unconfigured: ${configError.message})` : ''),
       { hint: KeyModeRequiredError.HINT },
     );
