@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   resolveSignUpId,
   splitTimestamp,
+  isDateOnly,
   extractSlots,
   toParticipant,
   fetchParticipants,
@@ -46,11 +47,11 @@ describe('splitTimestamp', () => {
     });
   });
 
-  it('treats a midnight timestamp as date-only (the "time TBD" rows)', () => {
+  it('returns midnight verbatim — the date-only decision is isDateOnly\'s', () => {
     expect(splitTimestamp('2026-09-26T00:00:00')).toEqual({
       date: '2026-09-26',
       day_of_week: 'Saturday',
-      time: null,
+      time: '00:00',
     });
   });
 
@@ -58,6 +59,7 @@ describe('splitTimestamp', () => {
     // Parsed as literal fields, never through local-time Date parsing — a
     // 00:00 stamp in a negative-offset zone would otherwise roll back a day.
     expect(splitTimestamp('2026-01-01T00:00:00').date).toBe('2026-01-01');
+    expect(splitTimestamp('2026-01-01T00:00:00').time).toBe('00:00');
     expect(splitTimestamp('2026-01-01T00:00:00').day_of_week).toBe('Thursday');
   });
 
@@ -73,6 +75,22 @@ describe('splitTimestamp', () => {
       day_of_week: 'Wednesday',
       time: null,
     });
+  });
+});
+
+describe('isDateOnly', () => {
+  it('treats midnight-with-no-endtime as a "time TBD" row', () => {
+    expect(isDateOnly('2026-09-26T00:00:00', null)).toBe(true);
+  });
+
+  it('keeps a genuine midnight start that has an end time', () => {
+    // An overnight lock-in starting at 12:00 AM is a real time, not "TBD".
+    expect(isDateOnly('2026-09-26T00:00:00', '2026-09-26T06:00:00')).toBe(false);
+  });
+
+  it('is false for any non-midnight start', () => {
+    expect(isDateOnly('2026-08-21T17:00:00', null)).toBe(false);
+    expect(isDateOnly(null, null)).toBe(false);
   });
 });
 
@@ -119,6 +137,43 @@ describe('extractSlots (real captured v3 payload)', () => {
     expect(tbd.day_of_week).toBe('Saturday');
   });
 
+  it('treats a finite row with zero remaining as full even without the token', () => {
+    const [r] = extractSlots({
+      data: {
+        slots: [
+          { slotitems: [{ quantity: { limit: 2, taken: 2, remaining: 0 }, availability: { state: 'available' } }] },
+        ],
+      },
+    });
+    expect(r.is_full).toBe(true);
+  });
+
+  it('flags a locked row, which still reports state:available', () => {
+    const [r] = extractSlots({
+      data: {
+        slots: [
+          {
+            slotitems: [
+              {
+                quantity: { limit: 4, taken: 0, remaining: 4 },
+                availability: { state: 'available', signuplocked: true },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(r.locked).toBe(true);
+    expect(r.is_full).toBe(false);
+  });
+
+  it('flags addlocked rows too', () => {
+    const [r] = extractSlots({
+      data: { slots: [{ slotitems: [{ availability: { addlocked: true } }] }] },
+    });
+    expect(r.locked).toBe(true);
+  });
+
   it('reports the owner hidenames preference', () => {
     expect(slots[0].names_hidden).toBe(true);
   });
@@ -139,6 +194,7 @@ describe('extractSlots (real captured v3 payload)', () => {
     });
     expect(only.title).toBeUndefined();
     expect(only.location).toBeUndefined();
+    expect(only.locked).toBe(false);
   });
 
   it('reports unlimited slots as capacity-less rather than zero-remaining', () => {
@@ -210,13 +266,14 @@ describe('fetchParticipants', () => {
     expect(await fetchParticipants(f, 1, 2, -10)).toEqual([]);
   });
 
-  it('handles a null DATA payload', async () => {
+  it('rejects a SUCCESS:true envelope with an empty payload', async () => {
+    // Better an actionable message than an undefined dereference downstream.
     const f: Fetcher = async () => ({
       ok: true,
       status: 200,
       text: async () => JSON.stringify({ SUCCESS: true, DATA: null, MESSAGE: [] }),
     });
-    expect(await fetchParticipants(f, 1, 2, 0)).toEqual([]);
+    await expect(fetchParticipants(f, 1, 2, 0)).rejects.toThrow(/empty payload/);
   });
 });
 
@@ -300,6 +357,29 @@ describe('signupgenius_list_slots tool', () => {
     expect(out.totalAvailable).toBe(0);
   });
 
+  it('excludes locked rows from onlyAvailable', async () => {
+    const { fetcher } = routed({
+      slots: {
+        success: true,
+        data: {
+          slots: [
+            {
+              slotitems: [
+                { slotitemid: 1, quantity: { limit: 4, taken: 0, remaining: 4 }, availability: { state: 'available', signuplocked: true } },
+                { slotitemid: 2, quantity: { limit: 4, taken: 0, remaining: 4 }, availability: { state: 'available' } },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const out = JSON.parse(
+      (await setup(fetcher)({ url: '1', onlyAvailable: true, includeParticipants: false }))
+        .content[0].text,
+    );
+    expect(out.slots.map((s: { slotitemid: number }) => s.slotitemid)).toEqual([2]);
+  });
+
   it('degrades to no participant data when that endpoint fails', async () => {
     const f: Fetcher = async (url) =>
       url.includes('/slots')
@@ -308,6 +388,15 @@ describe('signupgenius_list_slots tool', () => {
     const out = JSON.parse((await setup(f)({ url: '62393618' })).content[0].text);
     expect(out.slotCount).toBe(5);
     expect(out.slots[0].participants).toBeUndefined();
+    // Must not read as "nobody signed up".
+    expect(out.participantsUnavailable.slotitemids).toHaveLength(5);
+    expect(out.participantsUnavailable.reason).toMatch(/NOT "nobody signed up"/);
+  });
+
+  it('omits the failure notice when every lookup succeeded', async () => {
+    const { fetcher } = routed();
+    const out = JSON.parse((await setup(fetcher)({ url: '62393618' })).content[0].text);
+    expect(out.participantsUnavailable).toBeUndefined();
   });
 
   it('reports 404, other HTTP errors, non-JSON and success:false distinctly', async () => {

@@ -77,7 +77,16 @@ export async function legacyPost<T>(
   if (parsed.SUCCESS !== true) {
     throw new Error(`SignUpGenius error from ${action}: ${legacyMessage(parsed) || 'unknown'}`);
   }
-  return parsed.DATA as T;
+  // `DATA` is optional on the wire. Casting it away turned a `SUCCESS:true`
+  // envelope with a null/missing DATA into `undefined`, which callers then
+  // dereferenced — a TypeError stack trace where an actionable message belongs.
+  if (parsed.DATA === undefined || parsed.DATA === null) {
+    throw new Error(
+      `SignUpGenius returned an empty payload from ${action}. ` +
+        'The sign-up or slot may not exist, or may no longer be public.',
+    );
+  }
+  return parsed.DATA;
 }
 
 /** Flatten `MESSAGE` (string or array) into one plain-text line. */

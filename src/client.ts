@@ -312,6 +312,21 @@ export class SignUpGeniusClient {
           'The entry may already be removed, belong to someone else, or the sign-up may be locked.',
       );
     }
+    // A lapsed ColdFusion session does NOT 4xx here — the dispatcher answers a
+    // 3xx to the login page, which `redirect: 'manual'` hands back verbatim and
+    // a bare `status >= 400` check would read as success. `isSessionExpired`
+    // cannot rescue this either: it fires on a 401, or on a 200 whose BODY
+    // carries the login markers, and this is neither. Catch it by destination.
+    // (The two session clocks are independent — see the CLAUDE.md quirk — so a
+    // valid JWT is no guarantee the CF session is still alive.)
+    const location = res.headers.get('location') ?? '';
+    if (/go=c\.Login|loginform|loginemail/i.test(location)) {
+      throw new AuthError(
+        res.status,
+        `releasing slot entry ${itemMemberId} redirected to the login page — the ColdFusion ` +
+          'session has lapsed even though the API token may still be valid. Retry to force a re-login.',
+      );
+    }
   }
 
   private async requestApi<T>(path: string, opts: RequestOpts): Promise<ApiResponse<T>> {

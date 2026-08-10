@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { SignUpGeniusClient } from '../client.js';
 import { textContent } from './_shared.js';
 import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
+import { fetchParticipants } from './slots.js';
 
 /**
  * Slot claim + release — the two core participant WRITES.
@@ -207,11 +208,23 @@ const releaseSchema = z.object({
       'The sign-up entry to withdraw — `participants[].item_member_id` from ' +
         'signupgenius_list_slots. This is the wizard\'s `imid`.',
     ),
+  slotitemid: z
+    .number()
+    .int()
+    .positive()
+    .describe(
+      'The slot the entry sits in (`slotitemid` from the same signupgenius_list_slots row). ' +
+        'Used to verify afterwards that the entry actually disappeared.',
+    ),
   memberId: z
     .number()
     .int()
     .positive()
-    .describe('Your SignUpGenius member id (signupgenius_get_profile).'),
+    .optional()
+    .describe(
+      'Optional. The signed-in member id is resolved automatically; supplying a DIFFERENT ' +
+        'one is rejected, because this tool only withdraws the current user\'s own sign-up.',
+    ),
   confirm: z.boolean().optional().describe('Must be true to actually withdraw.'),
 });
 
@@ -266,9 +279,20 @@ export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusCl
             'Re-read signupgenius_list_slots — slot ids change when the organizer edits the sheet.',
         );
       }
+      // #8: the payload stamps `myqty` onto EVERY returned row, so validating
+      // only items[0] would let a second row through unchecked.
+      if (items.length > 1) {
+        throw new Error(
+          `Slot item ${args.slotitemid} resolved to ${items.length} form rows, but a claim ` +
+            'may only take one. Claim each slot in a separate call.',
+        );
+      }
       const item = items[0];
-      const available = item.AVAILABLEQTY ?? 0;
-      if (available < quantity) {
+      // Only enforce when a finite figure came back. Coercing a missing
+      // AVAILABLEQTY to 0 made unlimited slots permanently unclaimable, with
+      // an error that said the opposite of the truth.
+      const available = item.AVAILABLEQTY;
+      if (typeof available === 'number' && Number.isFinite(available) && available < quantity) {
         throw new Error(
           `Slot item ${args.slotitemid} has only ${available} spot(s) left but ${quantity} ` +
             'were requested. Re-check availability with signupgenius_list_slots.',
@@ -295,7 +319,7 @@ export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusCl
           starttime: item.STARTTIME,
           endtime: item.ENDTIME,
           location: item.LOCATION,
-          availableBefore: available,
+          availableBefore: available ?? 'unlimited/unreported',
         },
         signingUpAs: `${args.firstname} ${args.lastname} <${args.email}>`,
         quantity,
@@ -317,15 +341,23 @@ export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusCl
       // before it will accept a submission for this sign-up.
       await client.preProcessSignUp(parts.urlid);
 
-      const result = await client.request('', {
-        legacyAction: 's.processSignUpFormHandler',
-        body: payload,
-      });
-      if (!result.success) {
-        const detail = result.message.length > 0 ? result.message.join('; ') : 'unknown';
+      // `client.request` -> `parseEnvelope` THROWS on a `success:false`
+      // envelope, so a `if (!result.success)` check here would be dead code and
+      // the custom-field remediation would never reach the caller — which is
+      // the single most likely rejection ("key [PHONE] doesn't exist").
+      // Catch and re-throw with the guidance attached.
+      let result;
+      try {
+        result = await client.request('', {
+          legacyAction: 's.processSignUpFormHandler',
+          body: payload,
+        });
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
         throw new Error(
-          `Slot claim failed: ${detail}. If this mentions a missing field, read ` +
-            'signupgenius_get_public_signup.customFields and resend with every required answer.',
+          `Slot claim failed: ${detail}. If this mentions a missing or unknown field, read ` +
+            'signupgenius_get_public_signup.customFields and resend with every required answer ' +
+            '(this sheet\'s required set is reported there).',
         );
       }
       return textContent({ ...preview, submitted: true, server: result.data });
@@ -346,12 +378,37 @@ export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusCl
       const args = releaseSchema.parse(raw);
       const parts = parseSignUpUrl(args.url);
 
+      // Resolve WHO we are from the session rather than trusting the caller.
+      // signupgenius_list_slots publishes every participant's item_member_id
+      // and member_id for any public sheet, so a model that picked the wrong
+      // row could otherwise ask us to withdraw a stranger's sign-up. The
+      // server's authorization for s.DeletePerson is unverified (this path was
+      // deliberately never exercised), so enforce ownership client-side too.
+      const profileRes = await client.request<{ id?: number; memberid?: number }>(
+        '/member/profile',
+      );
+      const myId = profileRes.data?.id ?? profileRes.data?.memberid;
+      if (typeof myId !== 'number') {
+        throw new Error(
+          'Could not determine the signed-in member id from signupgenius_get_profile, ' +
+            'so ownership of this sign-up entry cannot be verified. Refusing to withdraw it.',
+        );
+      }
+      if (args.memberId !== undefined && args.memberId !== myId) {
+        throw new Error(
+          `Refusing to withdraw: memberId ${args.memberId} is not the signed-in member (${myId}). ` +
+            'This tool only removes the current user\'s own sign-up. To remove someone else, ' +
+            'the sign-up owner must do it in the SignUpGenius UI.',
+        );
+      }
+
       const preview = {
         action: 'release',
         signupid: parts.signupid,
         urlid: parts.urlid,
         itemMemberId: args.itemMemberId,
-        memberId: args.memberId,
+        slotitemid: args.slotitemid,
+        memberId: myId,
       };
       if (!args.confirm) {
         return textContent({
@@ -364,8 +421,35 @@ export function registerSlotWriteTools(server: McpServer, client: SignUpGeniusCl
         });
       }
 
-      await client.deletePerson(parts.signupid, args.itemMemberId, args.memberId);
-      return textContent({ ...preview, submitted: true });
+      await client.deletePerson(parts.signupid, args.itemMemberId, myId);
+
+      // Verify rather than trust the status code: s.DeletePerson answers HTML,
+      // so a "success" is only meaningful if the entry is actually gone.
+      let verified: boolean | null = null;
+      try {
+        const remaining = await fetchParticipants(
+          (url, init) => globalThis.fetch(url, init),
+          parts.signupid,
+          args.slotitemid,
+          0,
+        );
+        verified = !remaining.some((p) => p.item_member_id === args.itemMemberId);
+      } catch {
+        // Verification is best-effort; never turn a successful withdrawal into
+        // a failure because the read-back call had a bad minute.
+        verified = null;
+      }
+      if (verified === false) {
+        throw new Error(
+          `SignUpGenius accepted the withdrawal of entry ${args.itemMemberId} but it is still ` +
+            'listed on the slot. Nothing was removed — check the sheet in the UI.',
+        );
+      }
+      return textContent({
+        ...preview,
+        submitted: true,
+        verified: verified === true ? 'entry no longer listed on the slot' : 'could not re-check',
+      });
     },
   );
 }

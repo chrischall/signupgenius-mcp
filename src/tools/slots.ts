@@ -92,6 +92,12 @@ export interface SlotSummary {
   filled_count: number;
   available_count: number | null;
   is_full: boolean;
+  /**
+   * The organizer has locked the sheet (or this row) against new sign-ups.
+   * A locked row still reports `state: 'available'`, so without this a caller
+   * would offer a slot that the server then refuses.
+   */
+  locked: boolean;
   unlimited: boolean;
   /** Distinct people, which can be LOWER than filled_count (see module docs). */
   participant_count: number;
@@ -120,7 +126,7 @@ interface RawSlotItem {
     unlimited?: boolean;
     participantcount?: number;
   };
-  availability?: { state?: string };
+  availability?: { state?: string; signuplocked?: boolean; addlocked?: boolean };
   date?: {
     starttime?: string | null;
     endtime?: string | null;
@@ -155,6 +161,10 @@ export function resolveSignUpId(input: string): number {
  * timezone reported separately, so these are parsed as literal fields. Using
  * `new Date(...)` would re-interpret them in the host's zone and shift dates
  * across midnight — the "time TBD" rows sit exactly at 00:00 and would move.
+ *
+ * This returns the clock time verbatim; deciding that a row is date-only is
+ * `isDateOnly`'s job, because 00:00 by itself is ambiguous (a genuine midnight
+ * start looks identical to an unset time, and `hastime` is `true` on both).
  */
 export function splitTimestamp(ts: string | null | undefined): {
   date: string;
@@ -167,8 +177,22 @@ export function splitTimestamp(ts: string | null | undefined): {
   const date = `${y}-${mo}-${d}`;
   // Date.UTC avoids any local-timezone shift in the weekday lookup.
   const day = DAYS[new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d))).getUTCDay()];
-  const time = hh !== undefined && !(hh === '00' && mm === '00') ? `${hh}:${mm}` : null;
+  const time = hh === undefined ? null : `${hh}:${mm}`;
   return { date, day_of_week: day, time };
+}
+
+/**
+ * True when a row carries a date but no meaningful time.
+ *
+ * The "time TBD" competition rows arrive as `starttime: T00:00:00` with a null
+ * `endtime`. A genuine midnight start is indistinguishable from that on
+ * `starttime` alone — and `hastime` is `true` for both, so it is not a usable
+ * discriminator — but a real timed row on these sheets always carries an
+ * `endtime`. Requiring BOTH midnight AND a missing endtime keeps a real
+ * 12:00 AM slot (which has an end) from being mislabelled "TBD".
+ */
+export function isDateOnly(start: string | null | undefined, end: string | null | undefined): boolean {
+  return /T00:00(:00)?$/.test(String(start ?? '')) && !end;
 }
 
 /** Flatten the v3 slots envelope into one row per slot item. */
@@ -179,6 +203,7 @@ export function extractSlots(raw: RawSlotsEnvelope): SlotSummary[] {
       const q = item.quantity ?? {};
       const start = splitTimestamp(item.date?.starttime);
       const end = splitTimestamp(item.date?.endtime);
+      const dateOnly = isDateOnly(item.date?.starttime, item.date?.endtime);
       const limit = q.limit ?? null;
       const taken = q.taken ?? 0;
       const unlimited = q.unlimited === true;
@@ -188,12 +213,18 @@ export function extractSlots(raw: RawSlotsEnvelope): SlotSummary[] {
         slotitemid: item.slotitemid ?? 0,
         date: start.date,
         day_of_week: start.day_of_week,
-        start_time: start.time,
+        start_time: dateOnly ? null : start.time,
         end_time: end.time,
         capacity: unlimited ? null : limit,
         filled_count: taken,
         available_count: unlimited ? null : q.remaining ?? null,
-        is_full: item.availability?.state === 'full',
+        // `state` alone is not enough: a finite row can report `remaining: 0`
+        // without the exact token 'full'.
+        is_full:
+          item.availability?.state === 'full' ||
+          (!unlimited && (q.remaining ?? null) === 0),
+        locked:
+          item.availability?.signuplocked === true || item.availability?.addlocked === true,
         unlimited,
         participant_count: q.participantcount ?? 0,
         names_hidden: slot.hidenames === true,
@@ -298,7 +329,7 @@ export function registerSlotTools(
       }
 
       let slots = extractSlots(parsed);
-      if (args.onlyAvailable) slots = slots.filter((s) => !s.is_full);
+      if (args.onlyAvailable) slots = slots.filter((s) => !s.is_full && !s.locked);
 
       // Participant names cost one legacy POST per row. Bound both the
       // concurrency (this is a legacy ColdFusion dispatcher, not an API
@@ -306,6 +337,7 @@ export function registerSlotTools(
       // one tool call into 200 sequential requests and blow the client's
       // timeout.
       let participantsSkipped = 0;
+      const participantsFailed: number[] = [];
       if (args.includeParticipants !== false) {
         const targets = slots.slice(0, MAX_PARTICIPANT_LOOKUPS);
         participantsSkipped = slots.length - targets.length;
@@ -321,9 +353,11 @@ export function registerSlotTools(
                 slot.participant_count,
               );
             } catch {
-              // One bad row degrades to "no participant data" rather than
-              // failing the whole listing.
+              // One bad row degrades rather than failing the whole listing —
+              // but record it, because `participants: undefined` otherwise
+              // reads identically to "nobody signed up".
               slot.participants = undefined;
+              participantsFailed.push(slot.slotitemid);
             }
           }
         };
@@ -344,6 +378,16 @@ export function registerSlotTools(
           .reduce((n, s) => n + (s.available_count ?? 0), 0),
         unlimitedSlots: slots.filter((s) => s.unlimited).length,
         // Never let a cap look like "nobody signed up" — say so explicitly.
+        ...(participantsFailed.length > 0
+          ? {
+              participantsUnavailable: {
+                slotitemids: participantsFailed,
+                reason:
+                  'The participant lookup failed for these rows, so their names are missing. ' +
+                  'The counts are still accurate — this is NOT "nobody signed up".',
+              },
+            }
+          : {}),
         ...(participantsSkipped > 0
           ? {
               participantsOmitted: {

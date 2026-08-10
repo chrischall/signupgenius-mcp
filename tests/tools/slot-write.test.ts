@@ -125,8 +125,18 @@ function claimSetup(over: Record<string, unknown> = {}) {
   const { client, handlers } = setupTools(
     registerSlotWriteTools,
     sessionAccount,
-    (_path: string, opts: unknown) => {
-      const o = opts as { legacyAction: string; body: unknown };
+    (path: string, opts: unknown) => {
+      const o = (opts ?? {}) as { legacyAction?: string; body?: unknown };
+      if (!o.legacyAction) {
+        // client.request('/member/profile') — identity for the ownership check.
+        seen.push({ action: `GET ${path}`, body: undefined });
+        if ('profile' in over) {
+          const p = over.profile as { throws?: boolean; data?: unknown };
+          if (p?.throws) throw new Error('profile unavailable');
+          return { success: true, message: [], data: p?.data };
+        }
+        return { success: true, message: [], data: { id: 4262737 } };
+      }
       seen.push({ action: o.legacyAction, body: o.body });
       if (o.legacyAction === 's.getSignupInfo') {
         return { success: true, message: [], data: 'info' in over ? over.info : INFO };
@@ -134,7 +144,9 @@ function claimSetup(over: Record<string, unknown> = {}) {
       if (o.legacyAction === 's.getSignUpFormItems') {
         return { success: true, message: [], data: 'items' in over ? over.items : [ITEM] };
       }
-      return 'submit' in over ? over.submit : { success: true, message: [], data: { ok: 1 } };
+      if ('submitThrowsRaw' in over) throw 'plain-string failure';
+      if ('submitThrows' in over) throw new Error(over.submitThrows as string);
+      return { success: true, message: [], data: { ok: 1 } };
     },
   );
   const pre = vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
@@ -197,9 +209,22 @@ describe('signupgenius_claim_slot', () => {
     ).rejects.toThrow(/only 1 spot\(s\) left but 3/);
   });
 
-  it('treats a missing AVAILABLEQTY as no room', async () => {
+  it('allows a slot whose availability is unreported (unlimited rows)', async () => {
+    // Coercing a missing AVAILABLEQTY to 0 made unlimited slots permanently
+    // unclaimable, with an error that said the opposite of the truth.
     const { handlers } = claimSetup({ items: [{ ...ITEM, AVAILABLEQTY: undefined }] });
-    await expect(handlers.get('signupgenius_claim_slot')!(CLAIM)).rejects.toThrow(/only 0 spot/);
+    const out = JSON.parse(
+      (await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text,
+    );
+    expect(out.submitted).toBe(false);
+    expect(out.slot.availableBefore).toBe('unlimited/unreported');
+  });
+
+  it('refuses when one slotitemid resolves to several form rows', async () => {
+    const { handlers } = claimSetup({ items: [ITEM, { ...ITEM, SLOTITEMID: 999 }] });
+    await expect(handlers.get('signupgenius_claim_slot')!(CLAIM)).rejects.toThrow(
+      /resolved to 2 form rows/,
+    );
   });
 
   it('treats a non-array items payload as "not found"', async () => {
@@ -207,25 +232,29 @@ describe('signupgenius_claim_slot', () => {
     await expect(handlers.get('signupgenius_claim_slot')!(CLAIM)).rejects.toThrow(/was not found/);
   });
 
-  it('surfaces a server rejection with the custom-field hint', async () => {
+  it('handles a non-Error rejection value', async () => {
+    const { handlers } = claimSetup({ submitThrowsRaw: true });
+    await expect(
+      handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }),
+    ).rejects.toThrow(/Slot claim failed: plain-string failure/);
+  });
+
+  it('attaches the custom-field hint to a THROWN server rejection', async () => {
+    // The real client throws on a success:false envelope, so a
+    // `if (!result.success)` check would be dead code and this guidance —
+    // the most likely rejection — would never reach the caller.
     const { handlers } = claimSetup({
-      submit: { success: false, message: ['key [PHONE] doesn’t exist'], data: null },
+      submit: undefined,
+      submitThrows: 'SignUpGenius error: key [PHONE] doesn’t exist',
     });
     await expect(
       handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }),
     ).rejects.toThrow(/Slot claim failed.*PHONE.*customFields/s);
   });
-
-  it('reports "unknown" when a rejection carries no message', async () => {
-    const { handlers } = claimSetup({ submit: { success: false, message: [], data: null } });
-    await expect(
-      handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }),
-    ).rejects.toThrow(/unknown/);
-  });
 });
 
 describe('signupgenius_release_slot', () => {
-  const REL = { url: PARTS.urlid, itemMemberId: 1381103237, memberId: 4262737 };
+  const REL = { url: PARTS.urlid, itemMemberId: 2000004, slotitemid: 1762735194, memberId: 4262737 };
 
   it('previews without removing anything', async () => {
     const { handlers, del } = claimSetup();
@@ -235,12 +264,84 @@ describe('signupgenius_release_slot', () => {
     expect(del).not.toHaveBeenCalled();
   });
 
-  it('removes the entry when confirmed', async () => {
+  it('resolves the member id from the session rather than trusting the caller', async () => {
     const { handlers, del } = claimSetup();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ SUCCESS: true, MESSAGE: [], DATA: { participants: [] } }),
+    } as never);
+    const out = JSON.parse(
+      (await handlers.get('signupgenius_release_slot')!({ ...REL, memberId: undefined, confirm: true }))
+        .content[0].text,
+    );
+    expect(del).toHaveBeenCalledWith(62393618, 2000004, 4262737);
+    expect(out.memberId).toBe(4262737);
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+
+  it('refuses to withdraw an entry belonging to somebody else', async () => {
+    // list_slots publishes every participant's item_member_id and member_id
+    // for any public sheet, so a wrong row must not silently remove a stranger.
+    const { handlers, del } = claimSetup();
+    await expect(
+      handlers.get('signupgenius_release_slot')!({ ...REL, memberId: 999999, confirm: true }),
+    ).rejects.toThrow(/not the signed-in member/);
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the signed-in member id cannot be determined', async () => {
+    const { handlers, del } = claimSetup({ profile: { data: {} } });
+    await expect(handlers.get('signupgenius_release_slot')!(REL)).rejects.toThrow(
+      /cannot be verified/,
+    );
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('accepts a profile that reports memberid instead of id', async () => {
+    const { handlers } = claimSetup({ profile: { data: { memberid: 4262737 } } });
+    const out = JSON.parse((await handlers.get('signupgenius_release_slot')!(REL)).content[0].text);
+    expect(out.memberId).toBe(4262737);
+  });
+
+  it('verifies the entry actually disappeared', async () => {
+    const { handlers } = claimSetup();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ SUCCESS: true, MESSAGE: [], DATA: { participants: [] } }),
+    } as never);
     const out = JSON.parse(
       (await handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true })).content[0].text,
     );
     expect(out.submitted).toBe(true);
-    expect(del).toHaveBeenCalledWith(62393618, 1381103237, 4262737);
+    expect(out.verified).toMatch(/no longer listed/);
+  });
+
+  it('fails loudly when the entry is still listed after a "successful" removal', async () => {
+    const { handlers } = claimSetup();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          SUCCESS: true,
+          MESSAGE: [],
+          DATA: { participants: [{ firstname: 'A', lastname: 'B', myqty: 1, itemmemberid: 2000004 }] },
+        }),
+    } as never);
+    await expect(
+      handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true }),
+    ).rejects.toThrow(/still\s+listed/);
+  });
+
+  it('reports an unverifiable removal without failing it', async () => {
+    const { handlers } = claimSetup();
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network'));
+    const out = JSON.parse(
+      (await handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true })).content[0].text,
+    );
+    expect(out.submitted).toBe(true);
+    expect(out.verified).toMatch(/could not re-check/);
   });
 });
