@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.3.1...v1.4.0) (2026-08-10)
+
+
+### Features
+
+* read slot availability and participants with no auth, and claim or release slots ([#116](https://github.com/chrischall/signupgenius-mcp/issues/116)) ([ed6bd56](https://github.com/chrischall/signupgenius-mcp/commit/ed6bd5602a9ee7d0705f5b2f03b3ba642b6b8ef7))
+
+
+### Documentation
+
+* correct stale requireKeyMode wording and the write-tool count ([#119](https://github.com/chrischall/signupgenius-mcp/issues/119)) ([ec3ad44](https://github.com/chrischall/signupgenius-mcp/commit/ec3ad445c37eb0be72fd0155adb8ad5566399c20))
+
 ## [1.3.1](https://github.com/chrischall/signupgenius-mcp/compare/v1.3.0...v1.3.1) (2026-08-06)
 
 
