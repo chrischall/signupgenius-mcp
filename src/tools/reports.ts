@@ -8,19 +8,27 @@ const reportArgs = z.object({
 });
 
 /**
- * Report endpoints are Pro-only. The session-mode v3 web API has no
- * equivalent — only the sign-up owner can pull report data, and the v3 paths
- * for it were not discovered during recon. We still register the tools so
- * Claude knows they exist, but in session mode they fail fast with the shared
- * ModeMismatchError, whose hint says "Switch to key mode to use {tool}." —
- * the SIGNUPGENIUS_USER_KEY pointer lives in each tool's description below.
+ * Report endpoints are Pro-only AND owner-scoped. We still register the tools
+ * so Claude knows they exist, but in session mode they fail fast with the
+ * shared ModeMismatchError, whose hint says "Switch to key mode to use
+ * {tool}." — the SIGNUPGENIUS_USER_KEY pointer lives in each tool's
+ * description below.
+ *
+ * These are NOT the general answer to "what slots are open?". A Pro key only
+ * reports on sheets its holder created, so it cannot serve the common
+ * participant case at all. `signupgenius_list_slots` covers that with no auth
+ * (see slots.ts), and every failure path here points at it.
  */
 export function registerReportTools(server: McpServer, client: SignUpGeniusClient): void {
   const register = (toolName: string, path: string, blurb: string) => {
     server.registerTool(
       toolName,
       {
-        description: `${blurb} Requires SIGNUPGENIUS_USER_KEY (Pro subscription) — session mode is not supported for reports.`,
+        description:
+          `${blurb} Requires SIGNUPGENIUS_USER_KEY (Pro subscription) — session mode is not ` +
+          'supported for reports — AND only covers sheets the key-holder created. ' +
+          'For slot dates, times and availability on ANY sign-up (including sheets the user ' +
+          'did not create) prefer signupgenius_list_slots, which needs no auth.',
         annotations: { readOnlyHint: true },
         inputSchema: reportArgs.shape,
       },

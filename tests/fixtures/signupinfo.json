@@ -1,0 +1,55 @@
+{
+ "id": 62393618,
+ "urlid": "10C0849AAAA2EA4FD0-62393618-20262027",
+ "title": "2026-2027 Myers Park Marching Mustangs Chaperones",
+ "description": "<p style=\"text-align:inherit\">We are looking forward to another great season! Chaperoning band events\u00a0is a fun way to support our marchers at football games and band competitions. You will\u00a0get a close look at the band&#39;s inner workings and awesome spirit.</p>\n\n<p style=\"text-align:inherit\">Football games are Friday evenings. Home games, you will meet at the band room, watch band warm ups, proce</p>",
+ "fullurl": "https://www.signupgenius.com/go/10C0849AAAA2EA4FD0-62393618-20262027",
+ "community": "MPMM 26-27",
+ "communityid": 25532797,
+ "listType": "Volunteering",
+ "listformat": "Standard",
+ "contactname": "Robin Hale",
+ "ownerfirst": "Robin",
+ "ownerlast": "Hale",
+ "owneremail": "organizer@example.com",
+ "owner": 15465560,
+ "datecreated": "February, 16 2026 10:08:45 -0500",
+ "datemodified": "July, 26 2026 15:50:24 -0400",
+ "tzshort": "EDT",
+ "useRSVP": 0,
+ "showRSVP": 0,
+ "accountRequired": 0,
+ "hascustomfields": true,
+ "customfields": [
+  {
+   "required": true,
+   "fieldtype": "PhoneType",
+   "fieldvalues": [
+    {
+     "optionname": "Select Type",
+     "optionval": ""
+    },
+    {
+     "OPTIONNAME": "Home",
+     "OPTIONVAL": "Home"
+    },
+    {
+     "OPTIONNAME": "Mobile",
+     "OPTIONVAL": "Mobile"
+    },
+    {
+     "OPTIONNAME": "Work",
+     "OPTIONVAL": "Work"
+    }
+   ],
+   "fieldname": "PhoneType"
+  },
+  {
+   "required": true,
+   "fieldtype": "Phone",
+   "fieldvalues": "",
+   "fieldname": "Phone"
+  }
+ ],
+ "signupimage": "https://www.signupgenius.com/images/theme/"
+}

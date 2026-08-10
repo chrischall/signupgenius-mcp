@@ -571,6 +571,62 @@ describe('SignUpGeniusClient — fetchproxy session (lazy lift + renewal)', () =
   });
 });
 
+describe('SignUpGeniusClient.deletePerson (slot release)', () => {
+  // Release is a plain GET navigation in the wizard, not a SUGboxAPI JSON
+  // action — the server answers with HTML and a redirect back to the sheet.
+  it('GETs s.DeletePerson with id/imid/mid and no JSON Accept', async () => {
+    const spy = mockFetch({ status: 302, rawBody: '' });
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: async () => ({ accessToken: 'JWT', cookieHeader: 'cfid=1' }) });
+    await client.deletePerson(62393618, 1381103237, 4262737);
+    const url = spy.mock.calls[0]![0] as string;
+    expect(url).toContain('/index.cfm?go=s.DeletePerson');
+    expect(url).toContain('id=62393618');
+    expect(url).toContain('imid=1381103237');
+    expect(url).toContain('mid=4262737');
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe('GET');
+    expect(init.redirect).toBe('manual');
+    expect((init.headers as Record<string, string>).Accept).toBe('text/html');
+  });
+
+  it('accepts a 200 as success', async () => {
+    mockFetch({ status: 200, rawBody: '<html>ok</html>' });
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: async () => ({ accessToken: 'JWT', cookieHeader: 'cfid=1' }) });
+    await expect(client.deletePerson(1, 2, 3)).resolves.toBeUndefined();
+  });
+
+  it('treats a 302 to the login page as failure, not success', async () => {
+    // redirect:'manual' hands the 302 back verbatim, so a bare `status >= 400`
+    // check would report a lapsed CF session as a completed withdrawal.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('', { status: 302, headers: { location: '/index.cfm?go=c.Login' } }) as never,
+    );
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: async () => ({ accessToken: 'JWT', cookieHeader: 'cfid=1' }) });
+    await expect(client.deletePerson(62393618, 999, 4262737)).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it('accepts a 302 back to the sheet', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('', { status: 302, headers: { location: '/go/ABC-1' } }) as never,
+    );
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: async () => ({ accessToken: 'JWT', cookieHeader: 'cfid=1' }) });
+    await expect(client.deletePerson(1, 2, 3)).resolves.toBeUndefined();
+  });
+
+  it('throws an actionable error on a 4xx/5xx', async () => {
+    mockFetch({ status: 403, rawBody: '' });
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: async () => ({ accessToken: 'JWT', cookieHeader: 'cfid=1' }) });
+    await expect(client.deletePerson(62393618, 999, 4262737)).rejects.toThrow(
+      /Releasing slot entry 999 .* status 403/,
+    );
+  });
+
+  it('refuses in key mode', async () => {
+    const client = new SignUpGeniusClient(keyAccount);
+    await expect(client.deletePerson(1, 2, 3)).rejects.toBeInstanceOf(ModeMismatchError);
+  });
+});
+
 describe('SignUpGeniusClient — degraded mode (no account configured)', () => {
   const bootstrapError = new Error('Missing SignUpGenius auth config. Set …');
   const newDegradedClient = () => new SignUpGeniusClient(null, { configError: bootstrapError });
@@ -652,7 +708,7 @@ describe('requireKeyMode with a resolved account', () => {
     expect(() => client.requireKeyMode('signupgenius_report_all')).not.toThrow();
   });
 
-  it('still throws ModeMismatchError in session mode (existing behavior)', () => {
+  it('throws KeyModeRequiredError in session mode, naming both modes', () => {
     const client = new SignUpGeniusClient({
       mode: 'session',
       name: 's',
@@ -662,7 +718,18 @@ describe('requireKeyMode with a resolved account', () => {
       email: 'a@b.c',
       password: 'pw',
     });
-    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(ModeMismatchError);
+    // Deliberately NOT the shared ModeMismatchError: "switch to key mode"
+    // does not tell the user that key mode means a paid Pro key, nor that
+    // reports are owner-scoped and so cannot serve someone else's sheet.
+    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(
+      KeyModeRequiredError,
+    );
+    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(
+      /requires Pro key mode but the server is running in session mode/,
+    );
+    expect(() => client.requireKeyMode('signupgenius_report_all')).toThrowError(
+      /signupgenius_list_slots/,
+    );
   });
 });
 

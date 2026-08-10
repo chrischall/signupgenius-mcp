@@ -23,10 +23,10 @@ import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
  *      built by `buildRsvpPayload`. Server returns `{ success, message,
  *      data }`; we surface failures as thrown errors.
  *
- * Slot-style sign-ups are explicitly rejected here. The wizard's submission
- * path for those is `type:"standard"` with an `items: [...]` list and a
- * separate `s.getSignUpFormItems` call — different enough that it deserves
- * its own tool.
+ * Slot-style sign-ups are explicitly rejected here. Their submission path is
+ * `type:"standard"` with an `items: [...]` list built from
+ * `s.getSignUpFormItems` — different enough that it lives in its own tool.
+ * That tool now exists: `signupgenius_claim_slot` (see slot-write.ts).
  */
 
 /** Subset of the `s.getSignupInfo` envelope this tool relies on. */
@@ -216,8 +216,8 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         'including invitations from family/friends). Walks the PreProcessSignup ' +
         '→ getSignupInfo → processSignUpFormHandler flow under the hood. ' +
         'Writes data — confirm with the user before invoking. Slot-based ' +
-        'sign-ups (e.g. "claim the 3pm slot") are NOT supported by this tool; ' +
-        'a slot signup tool is a separate concern.',
+        'sign-ups (e.g. "claim the 3pm slot") are NOT handled here — use ' +
+        'signupgenius_claim_slot for those.',
       annotations: { readOnlyHint: false },
       inputSchema: inputSchema.shape,
     },
@@ -235,7 +235,8 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
       if (Number(info.useRSVP) !== 1) {
         throw new Error(
           `Sign-up ${parts.urlid} is not an RSVP-style sheet (useRSVP=${info.useRSVP}). ` +
-            'This tool only handles Yes/No/Maybe responses. Slot-based sign-ups need a separate tool.',
+            'This tool only handles Yes/No/Maybe responses. For a slot-based sheet, list the ' +
+            'slots with signupgenius_list_slots and claim one with signupgenius_claim_slot.',
         );
       }
       if (isItemBasedRsvp(info)) {

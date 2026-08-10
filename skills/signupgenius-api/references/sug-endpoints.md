@@ -98,19 +98,54 @@ needed, works even without the login step above.
 
 **The modern page is an Angular shell, not server-rendered.** Verified
 2026-08-02: it contains no `h1.SUGHeaderText`, no slot markup, and a generic
-`<title>Sign Me Up</title>` under any User-Agent. The only real sheet
-metadata in the served HTML is the Open Graph block:
+`<title>Sign Me Up</title>` under any User-Agent.
+
+**Do not scrape it. Use `s.getSignupInfo`.** An earlier revision of this file
+claimed there was "no JSON surface that returns the same data" and told you to
+fall back to the Open Graph block. **That was wrong**, and it made
+`get_public_signup` return a useless stub (`"title": "Sign Me Up"`, empty
+description). The SPA's own metadata call is public:
 
 ```sh
-curl -s 'https://www.signupgenius.com/go/10C0849AAAA2EA4FD0-62393618-20262027' -o /tmp/sug-page.html
-grep -oE '<meta property="og:(title|description)" content="[^"]*' /tmp/sug-page.html
+curl -s -X POST -H 'Content-Type: application/json' \
+  --data '{"urlid":"10C0849AAAA2EA4FD0-62393618-20262027"}' \
+  'https://www.signupgenius.com/SUGboxAPI.cfm?go=s.getSignupInfo'
 ```
 
-Older sheets may still ship the legacy server-rendered landmarks
-(`h1.SUGHeaderText`, `<strong>Date/Time/Location</strong>`, the
-`creator-info` table, `Yes:/No:/Maybe:` counts); `signupgenius-mcp`'s
-`tools/public-signup.ts` tries those first and falls back to `og:`. For
-slots, don't scrape at all — use the JSON endpoint below.
+Verified live 2026-08-10 against sign-up 62393618:
+
+- **No auth of any kind.** A cold `curl` with an empty cookie jar returns the
+  same ~10 KB envelope the signed-in browser gets (10048 vs 10075 bytes — the
+  delta is theme/ad noise, not sheet data).
+- **No priming step.** `s.PreProcessSignup` and a prior `GET /go/<slug>` are
+  both unnecessary; all three orderings (cold / after-GET / after-preprocess)
+  return byte-identical `DATA`. This is ONE request, not a 3-step dance. (The
+  preprocess step is still required before a *write* — see §5.)
+
+Returns the upper-case `{MESSAGE, DATA, SUCCESS, CODE}` envelope. Useful
+`DATA` keys:
+
+| Key | Meaning |
+| --- | --- |
+| `title` | the real sheet name |
+| `description` | rich-text HTML — strip tags before showing |
+| `id`, `urlid`, `fullurl` | identity |
+| `community`, `communityid` | owning group |
+| `listType`, `listformat` | e.g. `Volunteering` / `Standard` |
+| `contactname`, `ownerfirst`, `ownerlast`, `owneremail`, `owner` | creator |
+| `datecreated`, `datemodified`, `tzshort` | timestamps + timezone |
+| `useRSVP`, `showRSVP` | `1` = Yes/No/Maybe sheet, `0` = slot-based |
+| `accountRequired`, `emailrequired`, `commentRequired` | participation gates |
+| `hascustomfields`, `customfields[]` | questions a claim MUST answer |
+
+**`DATA` carries no slots** — in either anonymous or authenticated mode. Slots
+live on the endpoints in "Reading slots" below.
+
+**Two `customfields` traps.** Its `fieldvalues` is an array for Select-style
+fields but an empty **string** for free-text ones, and inside that array the
+key casing is inconsistent — the placeholder row uses `optionname`/`optionval`
+while every real choice uses `OPTIONNAME`/`OPTIONVAL`. Read both casings and
+guard the non-array, or you will silently drop every option.
 
 ## 5. RSVP (write, 3-step flow)
 
@@ -263,10 +298,119 @@ Verified 2026-08-02 against sign-up `62393618`. Notes:
 - `signupid` comes from the `/go/` slug's middle segment, or from
   `s.getSignupInfo`'s `DATA.id`.
 
-The `/go/<slug>` HTML is a pure Angular shell — it contains **no** slot markup
-under any User-Agent — but it does carry `og:title` / `og:description` /
-`og:image` meta tags with the sheet's real title and description, which is
-more than `signupgenius_get_public_signup` currently extracts.
+### Participant names + quantities — also no auth
+
+`/v3/.../slots` gives you counts but not people. The names come from the
+legacy dispatcher, and it too needs **no** credentials (verified 2026-08-10
+from a cold `curl`):
+
+```sh
+curl -s -X POST -H 'Content-Type: application/json' \
+  --data '{"listid":62393618,"slotitemid":1762735194,"offset":1,"limitTo":100,
+           "search":"","orderBy":"","orderDesc":false,"memberidViewing":0}' \
+  'https://www.signupgenius.com/SUGboxAPI.cfm?go=s.getSignUpParticipantsBySlotItem'
+```
+
+Each row carries `firstname`, `lastname`, `nonmembername`, `mycomment`,
+`memberid`, **`myqty`** and **`itemmemberid`**.
+
+Two things make this endpoint essential:
+
+1. **`myqty` is how the counts reconcile.** A single entry can consume more
+   than one spot (a couple signing up together renders as one name with
+   `myqty: 2`). On 10/24/2026 the sheet
+   reads "4 of 6 filled" across only THREE name entries. **Never compute
+   filled-count from `participants.length`** — use `quantity.taken` from the
+   v3 slots feed, which is already quantity-weighted. (`quantity
+   .participantcount` is the distinct-people count, and is legitimately
+   lower.)
+2. **`itemmemberid` is the `imid`** that a release/withdraw needs (§6).
+
+Note this returns names even though the same slot reports `hidenames: true`
+on the v3 feed, so `hidenames` is a display preference on that feed, not an
+access control across the API as a whole.
+
+### `s.getSignUpFormItems` — a param problem, not an auth problem
+
+Earlier recon recorded this action as unusable ("Invalid Request" for
+`{listid}`, `{listid, siid:""}`, `{listid, siid:[]}`; an empty `DATA` for
+`siid: 0`) and left open whether a session cookie would fix it. **It would
+not.** Those inputs all describe an *empty selection*. Pass a real slot-item
+id and it answers immediately, unauthenticated:
+
+```sh
+curl -s -X POST -H 'Content-Type: application/json' \
+  --data '{"listid":62393618,"siid":["1762735186"],"hasProductImages":false}' \
+  'https://www.signupgenius.com/SUGboxAPI.cfm?go=s.getSignUpFormItems'
+```
+
+`siid` accepts an array of ids, a bare number, or a numeric string. The reply
+is upper-cased (`ITEM`, `SLOTITEMID`, `AVAILABLEQTY`, `STARTTIME`, `LOCATION`,
+…); the wizard lower-cases these client-side before echoing them back in a
+claim. This is **not** a slot-enumeration API — it describes ids you already
+have. Enumerate with `/v3/signups/{id}/slots`.
+
+Its sibling `s.getSignUpFormAttrs` is **wizard session state**, not a query:
+with nothing selected it returns "Oops! Looks like there's none to be
+processed or you're already done processing this sign up."
+
+## 6. Slot claim + release (write)
+
+Applies to slot-based sheets (`useRSVP: 0`). **Confirm with the user before
+either call.**
+
+**Claim** — `POST /SUGboxAPI.cfm?go=s.processSignUpFormHandler`, preceded by
+the §5 step-1 `PreProcessSignup`. Payload shape read directly out of the live
+Angular `objForm` plus `d.ProcessSignUp` in `/dist/js/signups/signup.min.js`:
+
+```js
+i = d.objForm;                            // listid, owner, urlid, title, siid[],
+                                          // rsvpid, imid, usealternatename,
+                                          // changemembermame, displayfirst/lastname,
+                                          // firstname, lastname, email,
+                                          // optInStatus, savecontactinfo
+i.type   = d.isrsvp ? "rsvp" : "standard";  // slot claims are "standard"
+i.source = "main";
+if (!d.isrsvp) i.items = d.items;         // rows from s.getSignUpFormItems,
+                                          // lower-cased, + myqty + mycomment
+i.member = d.user;
+i.isLoggedin = true;                      // when signed in
+i.customFields = [...custom, ...cq_address, ...cq_phone];  // cq_phone rows get
+                                                           // fieldtype = fieldname
+i.payLater = false;
+```
+
+Differences from the RSVP payload (§5): `siid` is an **array** of slot-item
+ids (RSVP sends `""`), `items` replaces `slotid`/`rsvp*`, and `type` is
+`"standard"`. The `changemembermame` misspelling is load-bearing in both.
+Omitting a required custom field (this sheet mandates `PhoneType` + `Phone`)
+gets the submission rejected by the CFML validator.
+
+**Release** — NOT a SUGboxAPI action. In the wizard (`d.deleteSignUp`) it is a
+plain browser navigation that answers HTML:
+
+```
+GET /index.cfm?go=s.DeletePerson&id=<signupid>&imid=<itemmemberid>&mid=<memberid>
+```
+
+(anonymous sign-ups send `&token=<attrs.token>` instead of `imid`/`mid`).
+Get `imid` from `itemmemberid` in `s.getSignUpParticipantsBySlotItem`.
+`s.deleteItemMember` looks like the obvious candidate but is the **owner's**
+path — the admin modal that removes somebody else from a slot.
+
+Two traps on this call. It answers HTML, and a **lapsed ColdFusion session
+redirects (3xx) to `go=c.Login`** rather than returning an error status — so a
+"did it work?" check on the status code alone reports a failed withdrawal as a
+success. Check the redirect destination, and re-read the slot to confirm the
+entry is gone. And because the participants endpoint publishes every
+`itemmemberid` **and** `memberid` publicly, confirm the entry belongs to the
+signed-in member before sending anything; the session profile reports that id
+as `id`, not `memberid`.
+
+> **Verification status.** Every READ above was exercised live. The two writes
+> in this section were reverse-engineered but deliberately **not** executed,
+> to avoid claiming and withdrawing a slot on a real sheet. Treat the claim
+> payload as high-confidence-but-unverified.
 
 ## Omitted — not reachable in session mode
 
@@ -279,15 +423,15 @@ there's nothing to transcribe for session mode.
 
 These reports are also **owner-scoped**: they answer for sign-ups the key
 holder created. For a sheet someone else owns, a Pro key is not a workaround —
-use the unauthenticated `/slots` endpoint above, which carries the slot
-titles, dates, locations, and taken/remaining counts that the reports were
-being reached for. What `/slots` does *not* carry is per-participant identity
-(who claimed which slot) or custom-question answers; those remain owner-only.
+so reports cannot serve the common participant case at all. Use the
+unauthenticated pair above instead: `/v3/signups/{id}/slots` for titles,
+dates, locations and taken/remaining counts, and
+`s.getSignUpParticipantsBySlotItem` for who is in each slot and how many
+spots each entry consumes. Between them they cover everything the reports
+were being reached for except custom-question answers, which remain
+owner-only.
 
-Slot-based (non-headcount) sign-ups still have no *submit* flow here — the
-wizard's `s.getSignUpFormItems` + per-item payload was never captured.
-`s.getSignUpFormItems` is a **form** call, not a display call: its `siid` is
-the list of slot-item IDs the user has already selected, so it cannot be used
-to enumerate a sheet (`siid:0` returns `SUCCESS:true` with an empty `DATA`).
-It also requires `POST /index.cfm?go=s.PreProcessSignup&URLID=<slug>` first,
-or the dispatcher answers "Oops! Looks like there's none to be processed".
+`s.getSignUpFormItems` is a **form** call, not a display call — its `siid` is
+a list of slot-item IDs, so it cannot enumerate a sheet. But it is NOT
+unusable and NOT auth-gated; see the section above for the working call.
+Unlike a write, it needs no `PreProcessSignup` priming.

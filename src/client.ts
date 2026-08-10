@@ -208,22 +208,31 @@ export class SignUpGeniusClient {
   /**
    * Guard for features ONLY key mode can ever satisfy (the Pro slot reports).
    *
-   * Why this exists instead of just calling `requireMode('key', …)`:
-   * `requireMode` calls `requireAccount()` first, so when config resolution was
-   * deferred the stored `configError` is what surfaces — and that error's
-   * remediation ("sign into signupgenius.com in your browser") can never
-   * enable a key-only feature. The user then chases a browser sign-in that
-   * cannot possibly fix the tool. Check the mode first so the requirement that
-   * actually applies leads, while keeping the config error visible in case it
-   * is itself a key-mode misconfiguration (e.g. a bad SIGNUPGENIUS_BASE_URL
-   * alongside a valid SIGNUPGENIUS_USER_KEY).
+   * Why this exists instead of `requireMode('key', …)`, which fails two ways:
+   *
+   *  - With config deferred, `requireMode` calls `requireAccount()` first, so
+   *    the stored `configError` surfaces — and its remediation ("sign into
+   *    signupgenius.com in your browser") can never enable a key-only feature.
+   *    The user chases a browser sign-in that cannot possibly fix the tool.
+   *  - With a resolved session account, it throws the shared
+   *    `ModeMismatchError`, whose "Switch to key mode" hint does not say that
+   *    key mode means a paid Pro API key, that reports are owner-scoped, or
+   *    what to use instead.
+   *
+   * So this always throws `KeyModeRequiredError`, naming the tool, the mode
+   * required and the mode in effect, and keeps the config error visible in
+   * case it is itself a key-mode misconfiguration (e.g. a bad
+   * SIGNUPGENIUS_BASE_URL alongside a valid SIGNUPGENIUS_USER_KEY).
    */
   requireKeyMode(featureLabel: string): void {
-    if (this.account) {
-      this.requireMode('key', featureLabel);
-      return;
-    }
-    throw new KeyModeRequiredError(featureLabel, this.configError);
+    if (this.account?.mode === 'key') return;
+    // Always KeyModeRequiredError, never the bare shared ModeMismatchError.
+    // The common failure is a user signed in via session/fetchproxy, and
+    // "switch to key mode" alone does not tell them that key mode means a
+    // paid Pro API key, nor that reports are owner-scoped and so cannot
+    // answer for someone else's sheet anyway. The hint carries both, plus
+    // the tool that actually works.
+    throw new KeyModeRequiredError(featureLabel, this.configError, this.account?.mode);
   }
 
   /**
@@ -262,6 +271,60 @@ export class SignUpGeniusClient {
       throw new Error(
         `PreProcessSignup for ${urlid} returned status ${res.status} ` +
           `(expected 301/302). The sign-up may be locked, expired, or invitee-only.`,
+      );
+    }
+  }
+
+  /**
+   * Withdraw a sign-up entry — `GET /index.cfm?go=s.DeletePerson`.
+   *
+   * This is NOT a SUGboxAPI JSON action. In the wizard (`d.deleteSignUp` in
+   * `/dist/js/signups/signup.min.js`) "remove me from this slot" is a plain
+   * browser navigation:
+   *
+   *     g.location.href = "/index.cfm?go=s.DeletePerson&id=" + signupid
+   *                     + "&imid=" + objForm.imid + "&mid=" + user.memberid
+   *
+   * so it answers with an HTML page, not JSON. `s.deleteItemMember` — the other
+   * plausible-looking action in the same bundle — is the OWNER's path, fired by
+   * the admin modal that removes somebody else from a slot; it is not what a
+   * participant giving up their own slot calls.
+   *
+   * Session mode only. A non-2xx/3xx status is surfaced rather than swallowed,
+   * since the dispatcher answers 200 on success and redirects back to the sheet.
+   */
+  async deletePerson(signupId: number, itemMemberId: number, memberId: number): Promise<void> {
+    this.requireMode('session', 'releasing a slot');
+    const acct = this.requireAccount() as Extract<Account, { mode: 'session' }>;
+    const url =
+      `${acct.legacyBaseUrl}/index.cfm?go=s.DeletePerson&id=${encodeURIComponent(String(signupId))}` +
+      `&imid=${encodeURIComponent(String(itemMemberId))}&mid=${encodeURIComponent(String(memberId))}`;
+    const res = await this.session!.withSession((session) =>
+      fetch(url, {
+        method: 'GET',
+        redirect: 'manual',
+        headers: { ...sessionAuthHeaders(session), Accept: 'text/html' },
+      }),
+    );
+    if (res.status >= 400) {
+      throw new Error(
+        `Releasing slot entry ${itemMemberId} on sign-up ${signupId} returned status ${res.status}. ` +
+          'The entry may already be removed, belong to someone else, or the sign-up may be locked.',
+      );
+    }
+    // A lapsed ColdFusion session does NOT 4xx here — the dispatcher answers a
+    // 3xx to the login page, which `redirect: 'manual'` hands back verbatim and
+    // a bare `status >= 400` check would read as success. `isSessionExpired`
+    // cannot rescue this either: it fires on a 401, or on a 200 whose BODY
+    // carries the login markers, and this is neither. Catch it by destination.
+    // (The two session clocks are independent — see the CLAUDE.md quirk — so a
+    // valid JWT is no guarantee the CF session is still alive.)
+    const location = res.headers.get('location') ?? '';
+    if (/go=c\.Login|loginform|loginemail/i.test(location)) {
+      throw new AuthError(
+        res.status,
+        `releasing slot entry ${itemMemberId} redirected to the login page — the ColdFusion ` +
+          'session has lapsed even though the API token may still be valid. Retry to force a re-login.',
       );
     }
   }
@@ -424,11 +487,21 @@ export class KeyModeRequiredError extends McpToolError {
   private static readonly HINT =
     'Set SIGNUPGENIUS_USER_KEY (a SignUpGenius Pro API key). Signing into signupgenius.com in your ' +
     'browser cannot enable this — slot reports exist only on the Pro v2/k API, which uses a ' +
-    'different auth scheme than the browser session.';
+    'different auth scheme than the browser session. Note a Pro key is ALSO owner-scoped: it ' +
+    'reports on sheets the key-holder created, not on someone else\'s. To read slots, dates and ' +
+    'availability on any sign-up — including one the user merely participates in — use ' +
+    'signupgenius_list_slots, which needs no auth at all.';
 
-  constructor(featureLabel: string, configError?: Error | null) {
+  constructor(
+    featureLabel: string,
+    configError?: Error | null,
+    /** The mode actually in effect, when an account did resolve. */
+    currentMode?: Account['mode'],
+  ) {
     super(
-      `${featureLabel} requires Pro key mode. ${KeyModeRequiredError.HINT}` +
+      `${featureLabel} requires Pro key mode` +
+        (currentMode ? ` but the server is running in ${currentMode} mode` : '') +
+        `. ${KeyModeRequiredError.HINT}` +
         (configError ? ` (auth is also unconfigured: ${configError.message})` : ''),
       { hint: KeyModeRequiredError.HINT },
     );

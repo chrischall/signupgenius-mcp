@@ -4,7 +4,9 @@
 [![npm](https://img.shields.io/npm/v/signupgenius-mcp)](https://www.npmjs.com/package/signupgenius-mcp)
 [![license](https://img.shields.io/npm/l/signupgenius-mcp)](LICENSE)
 
-MCP server for [SignUpGenius](https://www.signupgenius.com). 13 read tools and 1 write across profile, groups, sign-ups, and reports.
+MCP server for [SignUpGenius](https://www.signupgenius.com). 15 read tools and 4 write across profile, groups, sign-ups, reports, public sign-up metadata, slot listings, RSVPs, and slot claim/release.
+
+Reading a sign-up needs **no credentials at all**: `signupgenius_get_public_signup` (title, description, organizer, required questions) and `signupgenius_list_slots` (dates, times, locations, capacity, who has signed up and how many spots each entry takes) work on any public sheet, including ones you did not create. The two slot writes — `signupgenius_claim_slot` and `signupgenius_release_slot` — need a signed-in session and both require an explicit `confirm: true`, returning a dry-run preview otherwise.
 
 Three auth modes (tried in this priority order — first match wins):
 1. **Pro key mode.** Uses the documented Pro API key. Required only for the slot REPORT tools (filled/available/all-participants). Pro subscription needed.
@@ -54,7 +56,7 @@ Find the user key in SignUpGenius under **Pro Tools → API Management**.
 
 Install the [fetchproxy extension](https://github.com/chrischall/fetchproxy) (Chrome Web Store / Safari `.dmg`), sign into [signupgenius.com](https://www.signupgenius.com), and remove the env block from your MCP config. The MCP reads `accessToken` / `cfid` / `cftoken` cookies once at startup and uses them like a session-mode login. No password copy-paste required.
 
-The slot REPORT tools still require Pro key mode — `SIGNUPGENIUS_USER_KEY` is the only path that hits the documented v2/k Pro API.
+The slot REPORT tools still require Pro key mode — `SIGNUPGENIUS_USER_KEY` is the only path that hits the documented v2/k Pro API. They are also **owner-scoped**, so they only answer for sheets the key holder created; for availability and participants on anyone's sheet use `signupgenius_list_slots`, which needs no auth.
 
 ### Both at once
 
