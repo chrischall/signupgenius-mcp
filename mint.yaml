@@ -1,0 +1,70 @@
+version: 1
+name: SignUpGenius
+slug: signupgenius
+summary: >-
+  SignUpGenius MCP — read sign-ups, slots and groups, RSVP, and claim or
+  release slots. Three auth paths: Pro API key, email/password, or sign in
+  via the fetchproxy browser extension.
+#
+# Hosting note (a comment, not user-facing summary text): this is a
+# BROWSER-BRIDGE MCP — it reaches its site through the user's signed-in
+# tab via the fetchproxy bridge. A bridged registration also needs runtime
+# `fly-shared`, `bridge: true` and a `bridgePortEnv`, which are registration
+# fields this manifest has no schema for (set them over the control API).
+# `state.dataDir` below is required for `bridge`.
+env:
+  - name: SIGNUPGENIUS_EMAIL
+    required: false
+    help: >-
+      SignUpGenius login email (recommended). Pair with SIGNUPGENIUS_PASSWORD
+      for session mode — works on free accounts. No SSO/2FA.
+  - name: SIGNUPGENIUS_PASSWORD
+    secret: true
+    required: false
+    help: >-
+      SignUpGenius password (recommended) — required iff SIGNUPGENIUS_EMAIL is
+      set.
+  - name: SIGNUPGENIUS_USER_KEY
+    secret: true
+    required: false
+    help: >-
+      SignUpGenius Pro API key (Pro Tools > API Management). Required only for
+      slot REPORTS — Pro subscription needed.
+  - name: SIGNUPGENIUS_NAME
+    required: false
+    help: >-
+      Friendly account name used in startup logs.
+  - name: SIGNUPGENIUS_BASE_URL
+    required: false
+    help: >-
+      Override the default JSON API base (v2/k for key mode, v3 for session
+      mode).
+  - name: SIGNUPGENIUS_LEGACY_BASE_URL
+    required: false
+    help: >-
+      Session mode only: override the host for legacy /SUGboxAPI.cfm calls.
+      Defaults to https://www.signupgenius.com.
+  - name: SIGNUPGENIUS_LOGIN_URL
+    required: false
+    help: >-
+      Session mode only: override the login-form host. Defaults to
+      https://www.signupgenius.com.
+  - name: SIGNUPGENIUS_DISABLE_FETCHPROXY
+    required: false
+    help: >-
+      Set to 1 to skip the fetchproxy browser-extension fallback (missing creds
+      become a hard error — useful in headless CI).
+state:
+  dataDir: true
+  reason: >-
+    The fetchproxy identity lives at $HOME/.fetchproxy/identity/<name>.json
+    and the pair code derives from it. Without a persistent $HOME every cold
+    start mints a fresh identity and re-prompts pairing in the browser; the
+    API refuses bridge without it.
+egress:
+  allow:
+    # Only hosts the SERVER process actually fetches. Hosts that appear
+    # solely in a URL this server BUILDS and returns are excluded.
+    - api.signupgenius.com
+    - signupgenius.com
+    - www.signupgenius.com
