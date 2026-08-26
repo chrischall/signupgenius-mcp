@@ -1,5 +1,5 @@
 ---
-name: signupgenius-mcp
+name: signupgenius
 description: Read sign-up sheets, slot reports, and groups on SignUpGenius — and add members to your groups. Triggers on phrases like "check SignUpGenius", "what am I signed up for", "what slots are left for [event]", "available slots", "list my SignUpGenius groups", "add [person] to my [group] group", or any request involving SignUpGenius sign-ups, RSVPs, volunteer slots, potlucks, carpools, classroom helpers, or PTA/HOA/Scout/team sign-ups. Works against your own signed-in account; supports Pro key for full slot reports.
 ---
 
