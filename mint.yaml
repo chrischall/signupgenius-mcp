@@ -54,13 +54,28 @@ env:
     help: >-
       Set to 1 to skip the fetchproxy browser-extension fallback (missing creds
       become a hard error — useful in headless CI).
+  - name: SIGNUPGENIUS_SESSION_CACHE
+    required: false
+    help: >-
+      Set to false to disable the on-disk session cache and log in on every
+      process start. Defaults to enabled.
+  - name: SIGNUPGENIUS_SESSION_FILE
+    required: false
+    help: >-
+      Absolute path for the session cache file. Defaults to
+      $MCP_DATA_DIR/.signupgenius-mcp/session.json.
 state:
   dataDir: true
   reason: >-
-    The fetchproxy identity lives at $HOME/.fetchproxy/identity/<name>.json
-    and the pair code derives from it. Without a persistent $HOME every cold
-    start mints a fresh identity and re-prompts pairing in the browser; the
-    API refuses bridge without it.
+    Two things live here. The fetchproxy identity is at
+    $HOME/.fetchproxy/identity/<name>.json and the pair code derives from it —
+    without a persistent $HOME every cold start mints a fresh identity and
+    re-prompts pairing in the browser, and the API refuses bridge without it.
+    The signed-in session is cached at
+    $MCP_DATA_DIR/.signupgenius-mcp/session.json (0600); the JWT lives about 30
+    minutes and a hosted child idles out after ten, so without it a restart
+    inside that window re-runs the whole form login for a session that had not
+    expired.
 egress:
   allow:
     # Only hosts the SERVER process actually fetches. Hosts that appear

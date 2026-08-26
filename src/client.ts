@@ -1,4 +1,5 @@
 import { McpToolError, ModeMismatchError, UnreachableError } from '@chrischall/mcp-utils';
+import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import type { Account } from './config.js';
 
@@ -165,6 +166,8 @@ export class SignUpGeniusClient {
         return { accessToken: result.accessToken, cookieHeader: result.cookieHeader };
       },
       isExpired: isSessionExpired,
+      persistence: createSessionCache({ browserBacked: refreshSession !== undefined }) ?? undefined,
+      onPersistError: reportCacheWriteFailure,
     });
   }
 
