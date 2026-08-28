@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.5.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.4.0...v1.5.0) (2026-08-28)
+
+
+### Features
+
+* cache the signed-in session so a restart skips the form login ([#130](https://github.com/chrischall/signupgenius-mcp/issues/130)) ([9b326ea](https://github.com/chrischall/signupgenius-mcp/commit/9b326ea282f959a21fcc09f3cba7eb32a05bde60))
+
+
+### Bug Fixes
+
+* drop the bare signupgenius.com apex from mint.yaml egress ([#127](https://github.com/chrischall/signupgenius-mcp/issues/127)) ([3363a23](https://github.com/chrischall/signupgenius-mcp/commit/3363a230afd4bdf9fc8c7fd0090ac0b16494894f))
+
+
+### Documentation
+
+* **.env.example:** match the house comment style ([#139](https://github.com/chrischall/signupgenius-mcp/issues/139)) ([293546e](https://github.com/chrischall/signupgenius-mcp/commit/293546e274ecb8ffab78cdc04e295e82402407e7))
+* list the cache env vars in server.json and .env.example ([#136](https://github.com/chrischall/signupgenius-mcp/issues/136)) ([287a19b](https://github.com/chrischall/signupgenius-mcp/commit/287a19bc5d4dbf58da1d89e51e6eeca61879f1b7))
+* list the session-cache vars in the Environment block ([#140](https://github.com/chrischall/signupgenius-mcp/issues/140)) ([365c882](https://github.com/chrischall/signupgenius-mcp/commit/365c882fabe9aa585f50a8b08ee0180c61b14de7))
+* say which description the registry's 100-char cap applies to ([#138](https://github.com/chrischall/signupgenius-mcp/issues/138)) ([1a03e28](https://github.com/chrischall/signupgenius-mcp/commit/1a03e287bb03159caae6e471dd637fcc1ce9c402))
+* **skill:** declare the name this skill actually publishes under ([#132](https://github.com/chrischall/signupgenius-mcp/issues/132)) ([656b9a9](https://github.com/chrischall/signupgenius-mcp/commit/656b9a9334c3b6762fbd2d8bbedcc0e57ae47525))
+
 ## [1.4.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.3.1...v1.4.0) (2026-08-10)
 
 
