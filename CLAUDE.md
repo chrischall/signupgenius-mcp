@@ -36,6 +36,10 @@ SIGNUPGENIUS_NAME=...                      # optional display name; defaults to 
 
 # Path 3 — fetchproxy bootstrap (zero-config; default when no creds set)
 SIGNUPGENIUS_DISABLE_FETCHPROXY=1          # opt out of path 3; missing creds then become a hard error
+
+# Session cache (applies to path 2; the key and fetchproxy paths do not cache)
+SIGNUPGENIUS_SESSION_CACHE=false           # optional; skip the on-disk cache and re-authenticate every start
+SIGNUPGENIUS_SESSION_FILE=...              # optional; 0600 file, default $MCP_DATA_DIR/.signupgenius-mcp/session.json
 ```
 
 Non-https values for any `*_URL`/`*_BASE_URL` override throw `<var> must be an https URL`. Setting exactly one of `SIGNUPGENIUS_EMAIL`/`SIGNUPGENIUS_PASSWORD` throws an "Incomplete session config" error that propagates (it does **not** fall through to fetchproxy — only the "nothing set at all" case does).
