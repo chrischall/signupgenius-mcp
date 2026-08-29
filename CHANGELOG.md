@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.5.0...v1.6.0) (2026-08-29)
+
+
+### Features
+
+* **deps:** take @fetchproxy/server 2.2.0 so the concentrator can bind its sandbox address ([#141](https://github.com/chrischall/signupgenius-mcp/issues/141)) ([660f89f](https://github.com/chrischall/signupgenius-mcp/commit/660f89fba793b2b2852ba77c4f039028408998a4))
+
 ## [1.5.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.4.0...v1.5.0) (2026-08-28)
 
 
