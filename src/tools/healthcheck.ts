@@ -30,7 +30,7 @@ export function registerHealthcheckTools(server: McpServer, client: SignUpGenius
     probeFn: () => client.request(client.mode === 'session' ? '/member/profile' : '/user/profile'),
     hints: {
       credential_rejected:
-        'SignUpGenius rejected the credential. In key mode, check SIGNUPGENIUS_API_KEY; in session mode, sign into signupgenius.com in the browser so the fetchproxy fallback can lift a fresh session.',
+        'SignUpGenius rejected the credential. In key mode, check SIGNUPGENIUS_USER_KEY; in session mode, sign into signupgenius.com in the browser so the fetchproxy fallback can lift a fresh session.',
     },
   });
 }

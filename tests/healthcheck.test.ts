@@ -57,7 +57,7 @@ describe('signupgenius_healthcheck', () => {
       }),
     );
     expect(rejected.error?.kind).toBe('credential_rejected');
-    expect(rejected.hint).toMatch(/SIGNUPGENIUS_API_KEY/);
+    expect(rejected.hint).toMatch(/SIGNUPGENIUS_USER_KEY/);
 
     const upstream = await call(
       clientWith('key', async () => {
