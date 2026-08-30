@@ -119,6 +119,10 @@
     {
       "name": "signupgenius_release_slot",
       "description": "Withdraw a slot the user signed up for (write, requires confirm:true)"
+    },
+    {
+      "name": "signupgenius_healthcheck",
+      "description": "Verify SignUpGenius credentials and reachability, and report which auth MODE is active (api key vs fetchproxy session) along with the endpoint it implies."
     }
   ]
 }
