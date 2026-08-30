@@ -12,6 +12,7 @@ import type { Account } from './config.js';
 import { resolveAuth, type ResolvedAuth } from './auth.js';
 import { SignUpGeniusClient } from './client.js';
 import { registerUserTools } from './tools/user.js';
+import { registerHealthcheckTools } from './tools/healthcheck.js';
 import { registerGroupTools } from './tools/groups.js';
 import { registerSignUpTools } from './tools/signups.js';
 import { registerReportTools } from './tools/reports.js';
@@ -64,6 +65,7 @@ await runMcp({
   deps: client,
   tools: [
     (server, c) => registerUserTools(server, c),
+    (server, c) => registerHealthcheckTools(server, c),
     (server, c) => registerGroupTools(server, c),
     (server, c) => registerSignUpTools(server, c),
     (server, c) => registerReportTools(server, c),
