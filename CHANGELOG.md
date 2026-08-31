@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.6.0...v1.7.0) (2026-08-30)
+
+
+### Features
+
+* add signupgenius_healthcheck ([#143](https://github.com/chrischall/signupgenius-mcp/issues/143)) ([8f54163](https://github.com/chrischall/signupgenius-mcp/commit/8f5416329648b33bfd625b579a48506be7d2c1eb)), closes [#144](https://github.com/chrischall/signupgenius-mcp/issues/144)
+
 ## [1.6.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.5.0...v1.6.0) (2026-08-29)
 
 
