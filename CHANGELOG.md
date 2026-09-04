@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.7.0...v1.8.0) (2026-09-04)
+
+
+### Features
+
+* **tools:** compact by default — strip media URLs, and minify every response ([#157](https://github.com/chrischall/signupgenius-mcp/issues/157)) ([8547c6e](https://github.com/chrischall/signupgenius-mcp/commit/8547c6e703b367eddd66fb93bcb708266aedb60d))
+
 ## [1.7.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.6.0...v1.7.0) (2026-08-30)
 
 
