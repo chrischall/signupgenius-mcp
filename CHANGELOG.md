@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.8.1](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.0...v1.8.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.10.0 and @chrischall/mcp-utils 0.26.1 ([#169](https://github.com/chrischall/signupgenius-mcp/issues/169)) ([6d3254c](https://github.com/chrischall/signupgenius-mcp/commit/6d3254ca669ce27d7c4c51a8e7a58aa0e937855e))
+* **deps:** bump hono from 4.13.0 to 4.13.7 ([#167](https://github.com/chrischall/signupgenius-mcp/issues/167)) ([3fed6ae](https://github.com/chrischall/signupgenius-mcp/commit/3fed6ae11a58734f1e1382b83cea7e170d775198))
+* **deps:** declare the peer floors mcp-utils 0.26.1 requires ([#170](https://github.com/chrischall/signupgenius-mcp/issues/170)) ([0b3e65a](https://github.com/chrischall/signupgenius-mcp/commit/0b3e65addb567628e3dba039446ac7e77ea08afa))
+
 ## [1.8.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.7.0...v1.8.0) (2026-09-04)
 
 
