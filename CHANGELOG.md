@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.2](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.1...v1.8.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.11.3, so the hosted extension pin persists ([#172](https://github.com/chrischall/signupgenius-mcp/issues/172)) ([7034b36](https://github.com/chrischall/signupgenius-mcp/commit/7034b36a80792549e105d23461c2fd857fc2610a))
+* **deps:** @fetchproxy/server 3.0.0 — protocol v4 (forward secrecy, AAD over the frame) ([#174](https://github.com/chrischall/signupgenius-mcp/issues/174)) ([10b82e0](https://github.com/chrischall/signupgenius-mcp/commit/10b82e0008d9fff1fc8b77df57c678704657ad1e))
+
 ## [1.8.1](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.0...v1.8.1) (2026-09-10)
 
 
