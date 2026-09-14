@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.3](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.2...v1.8.3) (2026-09-14)
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group with 2 updates ([578f632](https://github.com/chrischall/signupgenius-mcp/commit/578f632e63a1b0d8355c59ea5ccaed8e97f66f48))
+
 ## [1.8.2](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.1...v1.8.2) (2026-09-14)
 
 
