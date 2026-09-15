@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.4](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.3...v1.8.4) (2026-09-15)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 3.0.1 — capped peer frames, logged load drops, atomic identity writes ([#178](https://github.com/chrischall/signupgenius-mcp/issues/178)) ([5c279d3](https://github.com/chrischall/signupgenius-mcp/commit/5c279d3d7daacf22f757dceb25687060383584d8))
+
 ## [1.8.3](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.2...v1.8.3) (2026-09-14)
 
 
