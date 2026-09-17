@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.4...v2.0.0) (2026-09-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** migrate server to SDK v2 ([#181](https://github.com/chrischall/signupgenius-mcp/issues/181))
+
+### Features
+
+* **mcp:** migrate server to SDK v2 ([#181](https://github.com/chrischall/signupgenius-mcp/issues/181)) ([b4aee97](https://github.com/chrischall/signupgenius-mcp/commit/b4aee97e0fce70bf29d673e91bd2d0d0d643542e))
+
+
+### Bug Fixes
+
+* **build:** preserve Zod initialization in standalone bundle ([#184](https://github.com/chrischall/signupgenius-mcp/issues/184)) ([7e5226a](https://github.com/chrischall/signupgenius-mcp/commit/7e5226acee2fb6d8ce9ff347eebd01b65745962b))
+* **mcp:** verify SDK v2 tool registration ([#185](https://github.com/chrischall/signupgenius-mcp/issues/185)) ([6ef3148](https://github.com/chrischall/signupgenius-mcp/commit/6ef31480c58d50370053893cf957fe6c5493d1de)), closes [#182](https://github.com/chrischall/signupgenius-mcp/issues/182)
+
 ## [1.8.4](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.3...v1.8.4) (2026-09-15)
 
 
