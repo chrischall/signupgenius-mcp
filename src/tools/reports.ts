@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { SignUpGeniusClient } from '../client.js';
 import { textContent } from './_shared.js';
@@ -31,7 +31,7 @@ export function registerReportTools(server: McpServer, client: SignUpGeniusClien
           'For slot dates, times and availability on ANY sign-up (including sheets the user ' +
           'did not create) prefer signupgenius_list_slots, which needs no auth.',
         annotations: { readOnlyHint: true },
-        inputSchema: reportArgs.shape,
+        inputSchema: reportArgs,
       },
       async (raw) => {
         // requireKeyMode, not requireMode: when auth config is deferred the

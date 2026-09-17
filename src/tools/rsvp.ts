@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { SignUpGeniusClient } from '../client.js';
 import { textContent } from './_shared.js';
@@ -207,7 +207,6 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
   // documented Pro API has no equivalent. Skip registration entirely so the
   // tool listing is honest about what's reachable.
   if (client.mode !== 'session') return;
-
   server.registerTool(
     'signupgenius_rsvp',
     {
@@ -219,7 +218,7 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         'sign-ups (e.g. "claim the 3pm slot") are NOT handled here — use ' +
         'signupgenius_claim_slot for those.',
       annotations: { readOnlyHint: false },
-      inputSchema: inputSchema.shape,
+      inputSchema: inputSchema,
     },
     async (raw) => {
       const args = inputSchema.parse(raw);

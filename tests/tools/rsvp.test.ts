@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { SignUpGeniusClient } from '../../src/client.js';
 import { keyAccount, sessionAccount } from './_setup.js';
 import {
