@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { textContent } from './_shared.js';
 import {
@@ -280,7 +280,7 @@ export function registerPublicSignUpTool(
         'for the actual dates/times and availability — this tool returns ' +
         'metadata only.',
       annotations: { readOnlyHint: true, openWorldHint: true },
-      inputSchema: inputSchema.shape,
+      inputSchema: inputSchema,
     },
     async (raw) => {
       const args = inputSchema.parse(raw);

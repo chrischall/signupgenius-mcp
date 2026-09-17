@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { SignUpGeniusClient } from '../../src/client.js';
 import type { KeyAccount, SessionAccount } from '../../src/config.js';
 

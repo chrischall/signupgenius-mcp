@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { textContent } from './_shared.js';
 import { parseSignUpUrl } from './public-signup.js';
@@ -318,7 +318,7 @@ export function registerSlotTools(
         'the Pro signupgenius_report_* tools cannot serve (they are key-only AND ' +
         'owner-scoped). This is the right tool for "what is still open?".',
       annotations: { readOnlyHint: true, openWorldHint: true },
-      inputSchema: inputSchema.shape,
+      inputSchema: inputSchema,
     },
     async (rawArgs) => {
       const args = inputSchema.parse(rawArgs);

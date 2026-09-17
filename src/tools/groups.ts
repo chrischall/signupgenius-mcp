@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { SignUpGeniusClient } from '../client.js';
 import { textContent } from './_shared.js';
@@ -31,7 +31,7 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
       description:
         'List groups created by the authenticated user. Returns groupid, title, and member count for each group.',
       annotations: { readOnlyHint: true },
-      inputSchema: listGroupsArgs.shape,
+      inputSchema: listGroupsArgs,
     },
     async (raw) => {
       const args = listGroupsArgs.parse(raw);
@@ -40,13 +40,12 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
       return textContent(data);
     },
   );
-
   server.registerTool(
     'signupgenius_list_group_members',
     {
       description: 'List members of a SignUpGenius group (basic info: name, email, memberid).',
       annotations: { readOnlyHint: true },
-      inputSchema: groupIdArgs.shape,
+      inputSchema: groupIdArgs,
     },
     async (raw) => {
       const args = groupIdArgs.parse(raw);
@@ -54,14 +53,13 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
       return textContent(data);
     },
   );
-
   server.registerTool(
     'signupgenius_get_group_member',
     {
       description:
         'Get detailed info for a group member (address, phone, email) when the member has provided it via a sign-up.',
       annotations: { readOnlyHint: true },
-      inputSchema: memberDetailArgs.shape,
+      inputSchema: memberDetailArgs,
     },
     async (raw) => {
       const args = memberDetailArgs.parse(raw);
@@ -69,7 +67,6 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
       return textContent(data);
     },
   );
-
   server.registerTool(
     'signupgenius_add_group_member',
     {
@@ -77,7 +74,7 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
         'Add a member to a SignUpGenius group by email address. First/last name are optional. ' +
         'Writes data — confirm with the user before invoking.',
       annotations: { readOnlyHint: false },
-      inputSchema: addMemberArgs.shape,
+      inputSchema: addMemberArgs,
     },
     async (raw) => {
       const args = addMemberArgs.parse(raw);

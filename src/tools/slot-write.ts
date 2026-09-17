@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { SignUpGeniusClient } from '../client.js';
 import { textContent } from './_shared.js';
@@ -239,7 +239,6 @@ export function registerSlotWriteTools(
   // v2/k key API has no equivalent, so registering them in key mode would
   // advertise something that can never run.
   if (client.mode !== 'session') return;
-
   server.registerTool(
     'signupgenius_claim_slot',
     {
@@ -251,7 +250,7 @@ export function registerSlotWriteTools(
         'has explicitly approved this specific slot. For Yes/No/Maybe headcount ' +
         'sheets use signupgenius_rsvp instead.',
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: claimSchema.shape,
+      inputSchema: claimSchema,
     },
     async (raw) => {
       const args = claimSchema.parse(raw);
@@ -369,7 +368,6 @@ export function registerSlotWriteTools(
       return textContent({ ...preview, submitted: true, server: result.data });
     },
   );
-
   server.registerTool(
     'signupgenius_release_slot',
     {
@@ -378,7 +376,7 @@ export function registerSlotWriteTools(
         'Call WITHOUT `confirm` first to preview which entry would be removed, ' +
         'then again with confirm:true. WRITES DATA — this removes a real sign-up.',
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: releaseSchema.shape,
+      inputSchema: releaseSchema,
     },
     async (raw) => {
       const args = releaseSchema.parse(raw);
