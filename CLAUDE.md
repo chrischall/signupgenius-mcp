@@ -107,7 +107,7 @@ tests/                    # mirrors src/ (tests/tools/* for tool files). Mocks S
                           #   @fetchproxy/bootstrap / sessionLogin at the module boundary; no network.
 ```
 
-Each `tools/*.ts` exports a `registerXxx…(server, client)` function — `registerXxxTools` (plural) for the multi-tool files, but the single-tool `rsvp.ts` and `public-signup.ts` export `registerRsvpTool` / `registerPublicSignUpTool` (singular). `public-signup.ts` and `slots.ts` take `(server, fetcher?)` instead of a client, since both bypass it entirely — their endpoints need no auth. `src/index.ts` wires all eight. Schemas use the const-zod pattern: `const args = z.object({...})`; the SDK gets `args.shape`, the handler does `args.parse(raw)`.
+Each `tools/*.ts` exports a `registerXxx…(server, client)` function — `registerXxxTools` (plural) for the multi-tool files, but the single-tool `rsvp.ts` and `public-signup.ts` export `registerRsvpTool` / `registerPublicSignUpTool` (singular). `public-signup.ts` and `slots.ts` take `(server, fetcher?)` instead of a client, since both bypass it entirely — their endpoints need no auth. `src/index.ts` wires all eight. Schemas use the const-zod pattern: `const args = z.object({...})`; the SDK gets the Zod object directly as `inputSchema: args`, and the handler can use the already validated arguments or call `args.parse(raw)` when it needs an explicit typed value.
 
 Registration is mode-aware: `client.mode` (which defaults to `'session'` when config is deferred) chooses key-vs-session endpoint paths, gates the session-only `legacy_get_my_signups` and `signupgenius_rsvp` (skipped entirely outside session mode), while report tools always register but throw `KeyModeRequiredError` if invoked outside key mode.
 
