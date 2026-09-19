@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/chrischall/signupgenius-mcp/compare/v2.0.0...v2.1.0) (2026-09-19)
+
+
+### Features
+
+* **deps:** take mcp-utils 1.0.0 so the server boots via serveStdio ([#186](https://github.com/chrischall/signupgenius-mcp/issues/186)) ([e37b0e8](https://github.com/chrischall/signupgenius-mcp/commit/e37b0e8810538874b57a8f5921f0b5258a3748f3))
+
 ## [2.0.0](https://github.com/chrischall/signupgenius-mcp/compare/v1.8.4...v2.0.0) (2026-09-17)
 
 
