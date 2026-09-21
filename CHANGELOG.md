@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.1](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.0...v2.1.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **deps:** bump dotenv from 17.4.2 to 18.0.0 ([#191](https://github.com/chrischall/signupgenius-mcp/issues/191)) ([4532102](https://github.com/chrischall/signupgenius-mcp/commit/4532102b29a63cf5d746e5e29fd01d0b07cd1877))
+* **deps:** bump zod from 4.6.2 to 4.6.5 in the production-dependencies group ([74e39fa](https://github.com/chrischall/signupgenius-mcp/commit/74e39fafb2efd0a73ed60b44996cca5e711ff00d))
+
 ## [2.1.0](https://github.com/chrischall/signupgenius-mcp/compare/v2.0.0...v2.1.0) (2026-09-19)
 
 
