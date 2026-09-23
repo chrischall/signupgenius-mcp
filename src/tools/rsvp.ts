@@ -11,6 +11,10 @@ import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
  * and comment), but the wire-side flow has three steps, mirroring the
  * Angular wizard in `/dist/js/main/signupform.min.js`:
  *
+ *   (Order at run time: getSignupInfo, the `/signups/signedupfor` duplicate
+ *   check, then — only on confirm:true — PreProcessSignup and the submit,
+ *   the same sequence claim_slot uses.)
+ *
  *   1. POST `/index.cfm?go=s.PreProcessSignup&URLID=<urlid>` (form-encoded).
  *      Server sets a ColdFusion-session pointer to "this sign-up is being
  *      processed by member X" — without it every follow-up SUGboxAPI call
@@ -209,6 +213,61 @@ export function isItemBasedRsvp(info: SignupInfo): boolean {
   return Array.isArray(items) && items.length > 0;
 }
 
+/** Subset of a `/signups/signedupfor` row that the duplicate check reads. */
+interface SignedUpForRow {
+  signupid?: number;
+  /** Non-zero when the member has an RSVP response on this sheet. */
+  rsvpid?: number;
+  /** `y` / `n` / `m`, or '' when there is no RSVP response. */
+  rsvpvalue?: string;
+  rsvpcount?: number;
+  rsvpchildcount?: number;
+}
+
+type OwnResponseLookup =
+  | { status: 'found'; row: SignedUpForRow }
+  | { status: 'none' }
+  | { status: 'unknown'; reason: string };
+
+/**
+ * Find the signed-in member's existing RSVP on sign-up `listid`, via
+ * `/signups/signedupfor` (each row carries `rsvpid` / `rsvpvalue` for the
+ * member's response on that sheet). Never throws: an unreadable list comes
+ * back as `unknown` so the caller decides how much to trust a non-match.
+ */
+async function findOwnResponse(
+  client: SignUpGeniusClient,
+  listid: number,
+): Promise<OwnResponseLookup> {
+  let rows: unknown;
+  try {
+    rows = (await client.request<unknown>('/signups/signedupfor')).data;
+  } catch (err) {
+    return {
+      status: 'unknown',
+      reason: `signedupfor lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  if (!Array.isArray(rows)) {
+    return { status: 'unknown', reason: 'signedupfor returned an unexpected shape' };
+  }
+  const row = (rows as SignedUpForRow[]).find(
+    (r) =>
+      Number(r?.signupid) === listid &&
+      (Number(r.rsvpid) > 0 || (typeof r.rsvpvalue === 'string' && r.rsvpvalue.length > 0)),
+  );
+  return row ? { status: 'found', row } : { status: 'none' };
+}
+
+function describeResponse(row: SignedUpForRow): string {
+  const letter = (row.rsvpvalue ?? '').toLowerCase();
+  const word = letter === 'y' ? 'yes' : letter === 'n' ? 'no' : letter === 'm' ? 'maybe' : 'unknown';
+  return (
+    `rsvpid ${row.rsvpid ?? '?'}, response ${word}, ` +
+    `${row.rsvpcount ?? 0} adult(s), ${row.rsvpchildcount ?? 0} child(ren)`
+  );
+}
+
 export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient): void {
   // Key mode doesn't have the cookie/JWT surface this flow needs, and the
   // documented Pro API has no equivalent. Skip registration entirely so the
@@ -223,7 +282,9 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         'WITHOUT `confirm` first to get a preview of the response, head counts and ' +
         'identity, show it to the user, then call again with confirm:true. WRITES ' +
         'DATA — never call with confirm:true unless the user has explicitly approved ' +
-        'this specific response. Slot-based ' +
+        'this specific response. Refuses when the signed-in member already has a ' +
+        'response on the sheet (it can only ADD a response, so a second one would ' +
+        'double-count) — change an existing answer in the SignUpGenius web UI. Slot-based ' +
         'sign-ups (e.g. "claim the 3pm slot") are NOT handled here — use ' +
         'signupgenius_claim_slot for those.',
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -232,11 +293,6 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
     async (raw) => {
       const args = inputSchema.parse(raw);
       const parts = parseSignUpUrl(args.url);
-
-      // PreProcessSignup marks the sign-up as "being processed by member X" on
-      // the ColdFusion session — part of the write, so only when confirmed.
-      // The dry-run reads getSignupInfo without it, as claim_slot does.
-      if (args.confirm === true) await client.preProcessSignUp(parts.urlid);
 
       const infoRes = await client.request<SignupInfo>('', {
         legacyAction: 's.getSignupInfo',
@@ -262,6 +318,22 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         );
       }
 
+      // #234: every RSVP is sent as a NEW response (rsvpid/imid 0), so a retry
+      // after a lost or 5xx response would add a second headcount. Look for a
+      // response the member already has on this sheet before previewing or
+      // submitting, and refuse rather than stack a duplicate. Changing an
+      // existing response is not supported here (the update wire format is
+      // unverified), so point at the web UI instead.
+      const mine = await findOwnResponse(client, info.id);
+      if (mine.status === 'found') {
+        throw new Error(
+          `You have already responded to ${parts.urlid} (${describeResponse(mine.row)}). ` +
+            'Not sending another RSVP, because this tool can only add a NEW response and a ' +
+            'second one would double-count. To change your answer, edit it in the ' +
+            'SignUpGenius web UI.',
+        );
+      }
+
       const payload = buildRsvpPayload(parts, info, args);
       const preview = {
         signupid: parts.signupid,
@@ -272,6 +344,10 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         children: payload.rsvpchildren,
         comment: payload.rsvpcomments,
         respondingAs: `${args.firstname} ${args.lastname} <${args.email}>`,
+        duplicateCheck:
+          mine.status === 'none'
+            ? 'no existing response from the signed-in member on this sheet'
+            : `could not check for an existing response (${mine.reason})`,
       };
       if (args.confirm !== true) {
         return textContent({
@@ -283,6 +359,11 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         });
       }
 
+      // PreProcessSignup marks the sign-up as "being processed by member X" on
+      // the ColdFusion session — part of the write, so only when confirmed.
+      // The dry-run reads getSignupInfo without it, as claim_slot does.
+      await client.preProcessSignUp(parts.urlid);
+
       let result;
       try {
         result = await client.request('', {
@@ -290,14 +371,29 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
           body: payload,
         });
       } catch (err) {
-        // #234: every RSVP is sent as a NEW response (rsvpid/imid 0), and the
-        // server can commit and still answer with a 5xx / non-JSON body. A
-        // blind resend would then add a second response, so say so.
+        // #234: the server can commit and still answer with a 5xx / non-JSON
+        // body. Re-read before inviting a resend, because a resend adds a
+        // second response.
         const detail = err instanceof Error ? err.message : String(err);
+        const after = await findOwnResponse(client, info.id);
+        if (after.status === 'found') {
+          throw new Error(
+            `RSVP submit reported an error (${detail}), but a response from you IS now recorded ` +
+              `on the sheet (${describeResponse(after.row)}). It most likely went through — ` +
+              'do NOT resend it. Confirm with signupgenius_list_signedupfor.',
+          );
+        }
+        if (after.status === 'unknown') {
+          throw new Error(
+            `RSVP submit failed: ${detail}. The RSVP may still have been recorded, and the tool ` +
+              `could not re-check (${after.reason}) — check signupgenius_list_signedupfor (or the ` +
+              'sheet in the SignUpGenius UI) before resending, because a resend adds a second ' +
+              'response.',
+          );
+        }
         throw new Error(
-          `RSVP submit failed: ${detail}. The RSVP may still have been recorded — check ` +
-            'signupgenius_list_signedupfor (or the sheet in the SignUpGenius UI) before ' +
-            'resending, because a resend adds a second response.',
+          `RSVP submit failed: ${detail}. A re-check shows no response from you is listed on the ` +
+            'sheet, so a retry should not double-count.',
         );
       }
       if (!result.success) {
