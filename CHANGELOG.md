@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.2](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.1...v2.1.2) (2026-09-23)
+
+
+### Bug Fixes
+
+* **deps:** require zod ^4.6.5 to match @chrischall/mcp-utils 2.4.0 ([#195](https://github.com/chrischall/signupgenius-mcp/issues/195)) ([a53efa3](https://github.com/chrischall/signupgenius-mcp/commit/a53efa3bfb3b55350cc9a652b06af6ebc6e8737c))
+* **deps:** upgrade @chrischall/mcp-utils to 2.4.0 and @fetchproxy/* to 3.2.0 ([#193](https://github.com/chrischall/signupgenius-mcp/issues/193)) ([b445b01](https://github.com/chrischall/signupgenius-mcp/commit/b445b0172d0bc56a37abcd48148b3e4cdf41c5a8))
+
 ## [2.1.1](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.0...v2.1.1) (2026-09-21)
 
 
