@@ -175,7 +175,62 @@ describe('signupgenius_rsvp tool', () => {
     expect(handlers.get('signupgenius_rsvp')).toBeUndefined();
   });
 
-  it('walks PreProcess → getSignupInfo → processSignUpFormHandler', async () => {
+  it('previews WITHOUT writing when confirm is absent', async () => {
+    // Parity with claim_slot/release_slot: a real RSVP under the user's name
+    // must never reach the organizer on the first call.
+    const { client, requestSpy, preSpy } = makeClient();
+    const handlers = attachTool(client);
+
+    const result = (await handlers.get('signupgenius_rsvp')!({
+      url: URL_FULL,
+      response: 'yes',
+      adults: 4,
+      firstname: 'Chris',
+      lastname: 'Hall',
+      email: 'chris@example.com',
+    })) as { content: Array<{ text: string }> };
+
+    const out = JSON.parse(result.content[0].text);
+    expect(out.submitted).toBe(false);
+    expect(out.note).toMatch(/DRY RUN/);
+    expect(out).toMatchObject({ response: 'yes', adults: 4, children: 0 });
+    expect(out.respondingAs).toBe('Chris Hall <chris@example.com>');
+    // Only the read happened: no PreProcessSignup, no submit.
+    expect(preSpy).not.toHaveBeenCalled();
+    expect(requestSpy).toHaveBeenCalledTimes(1);
+    expect(requestSpy).toHaveBeenCalledWith('', {
+      legacyAction: 's.getSignupInfo',
+      body: { urlid: SLUG },
+    });
+  });
+
+  it('treats confirm:false as a preview too', async () => {
+    const { client, preSpy } = makeClient();
+    const handlers = attachTool(client);
+    const result = (await handlers.get('signupgenius_rsvp')!({
+      url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: false,
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0].text).submitted).toBe(false);
+    expect(preSpy).not.toHaveBeenCalled();
+  });
+
+  it('declares explicit write annotations', () => {
+    const client = new SignUpGeniusClient(sessionAccount);
+    const server = new McpServer({ name: 'test', version: '0.0.0' });
+    const configs = new Map<string, { annotations?: Record<string, unknown> }>();
+    vi.spyOn(server, 'registerTool').mockImplementation((name: string, c: unknown) => {
+      configs.set(name, c as { annotations?: Record<string, unknown> });
+      return undefined as never;
+    });
+    registerRsvpTool(server, client);
+    expect(configs.get('signupgenius_rsvp')!.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    });
+  });
+
+  it('walks PreProcess → getSignupInfo → processSignUpFormHandler when confirmed', async () => {
     const { client, requestSpy, preSpy } = makeClient();
     const handlers = attachTool(client);
 
@@ -185,6 +240,7 @@ describe('signupgenius_rsvp tool', () => {
       firstname: 'Chris',
       lastname: 'Hall',
       email: 'chris@example.com',
+      confirm: true,
     })) as { content: Array<{ text: string }> };
 
     expect(preSpy).toHaveBeenCalledWith(SLUG);
@@ -205,6 +261,7 @@ describe('signupgenius_rsvp tool', () => {
     });
     const payload = JSON.parse(result.content[0].text);
     expect(payload.success).toBe(true);
+    expect(payload.submitted).toBe(true);
   });
 
   it('rejects item-based RSVPs with a clear, scope-limiting error', async () => {
@@ -263,7 +320,7 @@ describe('signupgenius_rsvp tool', () => {
     const handlers = attachTool(client);
     await expect(
       handlers.get('signupgenius_rsvp')!({
-        url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co',
+        url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
       }),
     ).rejects.toThrow(/Sign up failed|RSVP submit failed/i);
   });
@@ -281,7 +338,7 @@ describe('signupgenius_rsvp tool', () => {
     await expect(
       handlers.get('signupgenius_rsvp')!({
         url: URL_FULL, response: 'maybe',
-        firstname: 'A', lastname: 'B', email: 'x@y.co',
+        firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
       }),
     ).rejects.toThrow(/unknown/i);
   });

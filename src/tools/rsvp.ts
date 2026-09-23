@@ -144,6 +144,13 @@ const inputSchema = z.object({
   firstname: z.string().min(1),
   lastname: z.string().min(1),
   email: z.string().email(),
+  confirm: z
+    .boolean()
+    .optional()
+    .describe(
+      'Must be true to actually submit. Omit (or false) to get a dry-run preview of the ' +
+        'sign-up, response, head counts and identity — nothing is sent to the organizer.',
+    ),
 });
 
 /** Translate input + sign-up metadata into the wire payload. Pure / testable. */
@@ -212,19 +219,24 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
     {
       description:
         'RSVP to a SignUpGenius sign-up (the Yes/No/Maybe-style sheets, ' +
-        'including invitations from family/friends). Walks the PreProcessSignup ' +
-        '→ getSignupInfo → processSignUpFormHandler flow under the hood. ' +
-        'Writes data — confirm with the user before invoking. Slot-based ' +
+        'including invitations from family/friends). Two-step by design: call ' +
+        'WITHOUT `confirm` first to get a preview of the response, head counts and ' +
+        'identity, show it to the user, then call again with confirm:true. WRITES ' +
+        'DATA — never call with confirm:true unless the user has explicitly approved ' +
+        'this specific response. Slot-based ' +
         'sign-ups (e.g. "claim the 3pm slot") are NOT handled here — use ' +
         'signupgenius_claim_slot for those.',
-      annotations: { readOnlyHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       inputSchema: inputSchema,
     },
     async (raw) => {
       const args = inputSchema.parse(raw);
       const parts = parseSignUpUrl(args.url);
 
-      await client.preProcessSignUp(parts.urlid);
+      // PreProcessSignup marks the sign-up as "being processed by member X" on
+      // the ColdFusion session — part of the write, so only when confirmed.
+      // The dry-run reads getSignupInfo without it, as claim_slot does.
+      if (args.confirm === true) await client.preProcessSignUp(parts.urlid);
 
       const infoRes = await client.request<SignupInfo>('', {
         legacyAction: 's.getSignupInfo',
@@ -251,6 +263,26 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
       }
 
       const payload = buildRsvpPayload(parts, info, args);
+      const preview = {
+        signupid: parts.signupid,
+        urlid: parts.urlid,
+        title: info.title,
+        response: args.response,
+        adults: payload.rsvpadult,
+        children: payload.rsvpchildren,
+        comment: payload.rsvpcomments,
+        respondingAs: `${args.firstname} ${args.lastname} <${args.email}>`,
+      };
+      if (args.confirm !== true) {
+        return textContent({
+          ...preview,
+          submitted: false,
+          note:
+            'DRY RUN — nothing was sent. Show this to the user and call again with ' +
+            'confirm:true to submit the RSVP.',
+        });
+      }
+
       const result = await client.request('', {
         legacyAction: 's.processSignUpFormHandler',
         body: payload,
@@ -261,13 +293,8 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
       }
       return textContent({
         success: true,
-        signupid: parts.signupid,
-        urlid: parts.urlid,
-        title: info.title,
-        response: args.response,
-        adults: payload.rsvpadult,
-        children: payload.rsvpchildren,
-        comment: payload.rsvpcomments,
+        ...preview,
+        submitted: true,
         server: result.data,
       });
     },
