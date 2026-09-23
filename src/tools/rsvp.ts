@@ -235,7 +235,7 @@ type OwnResponseLookup =
  * member's response on that sheet). Never throws: an unreadable list comes
  * back as `unknown` so the caller decides how much to trust a non-match.
  */
-async function findOwnResponse(
+export async function findOwnResponse(
   client: SignUpGeniusClient,
   listid: number,
 ): Promise<OwnResponseLookup> {
@@ -259,7 +259,7 @@ async function findOwnResponse(
   return row ? { status: 'found', row } : { status: 'none' };
 }
 
-function describeResponse(row: SignedUpForRow): string {
+export function describeResponse(row: SignedUpForRow): string {
   const letter = (row.rsvpvalue ?? '').toLowerCase();
   const word = letter === 'y' ? 'yes' : letter === 'n' ? 'no' : letter === 'm' ? 'maybe' : 'unknown';
   return (

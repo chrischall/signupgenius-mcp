@@ -4,6 +4,8 @@ import { SignUpGeniusClient } from '../../src/client.js';
 import { keyAccount, sessionAccount } from './_setup.js';
 import {
   buildRsvpPayload,
+  describeResponse,
+  findOwnResponse,
   registerRsvpTool,
   type SignupInfo,
 } from '../../src/tools/rsvp.js';
@@ -530,5 +532,46 @@ describe('SignUpGeniusClient.preProcessSignUp', () => {
   it('refuses to run in key mode', async () => {
     const client = new SignUpGeniusClient(keyAccount);
     await expect(client.preProcessSignUp(SLUG)).rejects.toThrow(/session/i);
+  });
+});
+
+describe('describeResponse', () => {
+  it('names each response letter and defaults missing counts', () => {
+    expect(describeResponse({ rsvpid: 1, rsvpvalue: 'Y', rsvpcount: 2, rsvpchildcount: 1 })).toBe(
+      'rsvpid 1, response yes, 2 adult(s), 1 child(ren)',
+    );
+    expect(describeResponse({ rsvpid: 2, rsvpvalue: 'n' })).toMatch(/response no, 0 adult\(s\), 0 child/);
+    expect(describeResponse({ rsvpid: 3, rsvpvalue: 'm' })).toMatch(/response maybe/);
+    expect(describeResponse({})).toBe('rsvpid ?, response unknown, 0 adult(s), 0 child(ren)');
+  });
+});
+
+describe('findOwnResponse', () => {
+  function clientReturning(impl: () => Promise<unknown>) {
+    const client = new SignUpGeniusClient(sessionAccount);
+    vi.spyOn(client, 'request').mockImplementation(impl as never);
+    return client;
+  }
+
+  it('matches a row by rsvpvalue alone when rsvpid is absent, skipping null rows', async () => {
+    const client = clientReturning(async () => ({
+      data: [null, { signupid: 63774883, rsvpvalue: 'm' }],
+      message: [],
+      success: true,
+    }));
+    expect(await findOwnResponse(client, 63774883)).toEqual({
+      status: 'found',
+      row: { signupid: 63774883, rsvpvalue: 'm' },
+    });
+  });
+
+  it('reports a non-Error rejection as unknown', async () => {
+    const client = clientReturning(async () => {
+      throw 'boom';
+    });
+    expect(await findOwnResponse(client, 1)).toEqual({
+      status: 'unknown',
+      reason: 'signedupfor lookup failed: boom',
+    });
   });
 });
