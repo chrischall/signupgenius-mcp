@@ -437,7 +437,10 @@ export function registerSlotWriteTools(
           throw new Error(
             `Slot claim failed: ${detail}. The tool could not confirm whether the claim was ` +
               `recorded anyway (${after.reason}). Check signupgenius_list_slots for your entry ` +
-              'before resending — a resend after a claim that did land books a second entry.',
+              'before resending — a resend after a claim that did land books a second entry. ' +
+              'If the error mentions a missing or unknown field, read ' +
+              'signupgenius_get_public_signup.customFields and include every required answer ' +
+              'in the resend.',
           );
         }
         throw new Error(

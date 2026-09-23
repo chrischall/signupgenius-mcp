@@ -388,6 +388,21 @@ describe('signupgenius_claim_slot', () => {
       expect(err.message).toMatch(/could not confirm whether .* recorded/);
       expect(err.message).toMatch(/signupgenius_list_slots/);
     });
+
+    it('after a clear field rejection it cannot re-check, still points at customFields', async () => {
+      // A plain success:false rejection (e.g. a missing required answer) also
+      // lands in the unknown branch when the re-read fails; the custom-fields
+      // advice must survive alongside the verify-before-resend warning.
+      const { handlers } = claimOnly({
+        participantsThrowAfter: 1,
+        submitThrows: "key [PHONE] doesn't exist",
+      });
+      const err = await handlers
+        .get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true })
+        .catch((e: Error) => e);
+      expect(err.message).toMatch(/could not confirm whether .* recorded/);
+      expect(err.message).toMatch(/signupgenius_get_public_signup\.customFields/);
+    });
   });
 });
 
