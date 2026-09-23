@@ -100,7 +100,7 @@ src/
                           #   (no auth; POST s.getSignupInfo — NOT an HTML scrape)
     slots.ts              # registerSlotTools — list_slots (no auth; GET /v3/signups/{id}/slots
                           #   merged with s.getSignUpParticipantsBySlotItem for names + myqty)
-    rsvp.ts               # registerRsvpTool — signupgenius_rsvp (session-only write; PreProcessSignup→getSignupInfo→submit)
+    rsvp.ts               # registerRsvpTool — signupgenius_rsvp (session-only write; getSignupInfo→signedupfor duplicate check→PreProcessSignup→submit)
     slot-write.ts         # registerSlotWriteTools — claim_slot / release_slot (session-only writes,
                           #   both gated behind a confirm:true dry-run preview)
 tests/                    # mirrors src/ (tests/tools/* for tool files). Mocks SignUpGeniusClient.request /
@@ -135,7 +135,7 @@ Endpoint paths below are mode-dependent: key mode hits `/v2/k/...` (with `user_k
 | `signupgenius_report_available` | `tools/reports.ts` | `/signups/report/available/{signupId}` | **key only** | read |
 | `signupgenius_get_public_signup` | `tools/public-signup.ts` | `POST SUGboxAPI.cfm?go=s.getSignupInfo` (direct `fetch`, bypasses client) | no auth | read |
 | `signupgenius_list_slots` | `tools/slots.ts` | `GET /v3/signups/{id}/slots` + `s.getSignUpParticipantsBySlotItem` (direct `fetch`, bypasses client) | no auth | read |
-| `signupgenius_rsvp` | `tools/rsvp.ts` | `s.PreProcessSignup` → `SUGboxAPI.cfm?go=s.getSignupInfo` → `s.processSignUpFormHandler` | session only | **write** |
+| `signupgenius_rsvp` | `tools/rsvp.ts` | `SUGboxAPI.cfm?go=s.getSignupInfo` → `/signups/signedupfor` → `s.PreProcessSignup` → `s.processSignUpFormHandler` | session only | **write** |
 | `signupgenius_claim_slot` | `tools/slot-write.ts` | `s.getSignupInfo` → `s.getSignUpFormItems` → `s.PreProcessSignup` → `s.processSignUpFormHandler` (`type:"standard"`) | session only | **write** |
 | `signupgenius_release_slot` | `tools/slot-write.ts` | `GET /index.cfm?go=s.DeletePerson&id=&imid=&mid=` | session only | **write** |
 
@@ -146,6 +146,8 @@ Endpoint paths below are mode-dependent: key mode hits `/v2/k/...` (with `user_k
 1. `POST /index.cfm?go=s.PreProcessSignup&URLID=<urlid>` (form-encoded) — sets server-side session state. Implemented as `SignUpGeniusClient.preProcessSignUp(urlid)`.
 2. `POST /SUGboxAPI.cfm?go=s.getSignupInfo` with `{ urlid }` — returns the full sign-up envelope. Used to gate on `useRSVP === 1` and pull `rsvpdetails.slotid`.
 3. `POST /SUGboxAPI.cfm?go=s.processSignUpFormHandler` with the payload built by `buildRsvpPayload`.
+
+At run time the tool reads `getSignupInfo` first and only calls `PreProcessSignup` right before the submit (confirm:true), the same order `claim_slot` uses. Between the two it reads `/signups/signedupfor`: a row with this sheet's `signupid` and a non-zero `rsvpid` (or non-empty `rsvpvalue`) means the member already responded, and the tool refuses. The payload always sends `rsvpid:0`/`imid:0` (a NEW response), and updating an existing response by sending its `rsvpid` has not been verified live, so changing an answer goes through the web UI. After a failed submit it re-reads `signedupfor` so the error says whether the response landed anyway.
 
 **Slot-based sign-ups are explicitly rejected** by `signupgenius_rsvp` — they need `type:"standard"` + an `items` array + a separate `s.getSignUpFormItems` call. That path now lives in `signupgenius_claim_slot`; *reading* slots is covered by `signupgenius_list_slots`.
 

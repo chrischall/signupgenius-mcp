@@ -4,6 +4,8 @@ import { SignUpGeniusClient } from '../../src/client.js';
 import { keyAccount, sessionAccount } from './_setup.js';
 import {
   buildRsvpPayload,
+  describeResponse,
+  findOwnResponse,
   registerRsvpTool,
   type SignupInfo,
 } from '../../src/tools/rsvp.js';
@@ -136,9 +138,12 @@ describe('buildRsvpPayload', () => {
   });
 });
 
-function makeClient(account = sessionAccount) {
+function makeClient(account = sessionAccount, signedUpFor: unknown = []) {
   const client = new SignUpGeniusClient(account);
   const requestSpy = vi.spyOn(client, 'request').mockImplementation(async (path, opts) => {
+    if (path === '/signups/signedupfor') {
+      return { data: signedUpFor, message: [], success: true } as never;
+    }
     if (opts?.legacyAction === 's.getSignupInfo') {
       return { data: RSVP_INFO, message: [], success: true } as never;
     }
@@ -175,7 +180,67 @@ describe('signupgenius_rsvp tool', () => {
     expect(handlers.get('signupgenius_rsvp')).toBeUndefined();
   });
 
-  it('walks PreProcess → getSignupInfo → processSignUpFormHandler', async () => {
+  it('previews WITHOUT writing when confirm is absent', async () => {
+    // Parity with claim_slot/release_slot: a real RSVP under the user's name
+    // must never reach the organizer on the first call.
+    const { client, requestSpy, preSpy } = makeClient();
+    const handlers = attachTool(client);
+
+    const result = (await handlers.get('signupgenius_rsvp')!({
+      url: URL_FULL,
+      response: 'yes',
+      adults: 4,
+      firstname: 'Chris',
+      lastname: 'Hall',
+      email: 'chris@example.com',
+    })) as { content: Array<{ text: string }> };
+
+    const out = JSON.parse(result.content[0].text);
+    expect(out.submitted).toBe(false);
+    expect(out.note).toMatch(/DRY RUN/);
+    expect(out).toMatchObject({ response: 'yes', adults: 4, children: 0 });
+    expect(out.respondingAs).toBe('Chris Hall <chris@example.com>');
+    expect(out.duplicateCheck).toMatch(/no existing response/);
+    // Only reads happened: no PreProcessSignup, no submit.
+    expect(preSpy).not.toHaveBeenCalled();
+    expect(requestSpy).toHaveBeenCalledTimes(2);
+    expect(requestSpy).toHaveBeenCalledWith('', {
+      legacyAction: 's.getSignupInfo',
+      body: { urlid: SLUG },
+    });
+    expect(requestSpy).toHaveBeenCalledWith('/signups/signedupfor');
+    expect(requestSpy).not.toHaveBeenCalledWith('', expect.objectContaining({
+      legacyAction: 's.processSignUpFormHandler',
+    }));
+  });
+
+  it('treats confirm:false as a preview too', async () => {
+    const { client, preSpy } = makeClient();
+    const handlers = attachTool(client);
+    const result = (await handlers.get('signupgenius_rsvp')!({
+      url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: false,
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0].text).submitted).toBe(false);
+    expect(preSpy).not.toHaveBeenCalled();
+  });
+
+  it('declares explicit write annotations', () => {
+    const client = new SignUpGeniusClient(sessionAccount);
+    const server = new McpServer({ name: 'test', version: '0.0.0' });
+    const configs = new Map<string, { annotations?: Record<string, unknown> }>();
+    vi.spyOn(server, 'registerTool').mockImplementation((name: string, c: unknown) => {
+      configs.set(name, c as { annotations?: Record<string, unknown> });
+      return undefined as never;
+    });
+    registerRsvpTool(server, client);
+    expect(configs.get('signupgenius_rsvp')!.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    });
+  });
+
+  it('walks getSignupInfo → signedupfor check → PreProcess → processSignUpFormHandler when confirmed', async () => {
     const { client, requestSpy, preSpy } = makeClient();
     const handlers = attachTool(client);
 
@@ -185,6 +250,7 @@ describe('signupgenius_rsvp tool', () => {
       firstname: 'Chris',
       lastname: 'Hall',
       email: 'chris@example.com',
+      confirm: true,
     })) as { content: Array<{ text: string }> };
 
     expect(preSpy).toHaveBeenCalledWith(SLUG);
@@ -192,7 +258,8 @@ describe('signupgenius_rsvp tool', () => {
       legacyAction: 's.getSignupInfo',
       body: { urlid: SLUG },
     });
-    expect(requestSpy).toHaveBeenNthCalledWith(2, '', {
+    expect(requestSpy).toHaveBeenNthCalledWith(2, '/signups/signedupfor');
+    expect(requestSpy).toHaveBeenNthCalledWith(3, '', {
       legacyAction: 's.processSignUpFormHandler',
       body: expect.objectContaining({
         type: 'rsvp',
@@ -205,6 +272,7 @@ describe('signupgenius_rsvp tool', () => {
     });
     const payload = JSON.parse(result.content[0].text);
     expect(payload.success).toBe(true);
+    expect(payload.submitted).toBe(true);
   });
 
   it('rejects item-based RSVPs with a clear, scope-limiting error', async () => {
@@ -263,9 +331,136 @@ describe('signupgenius_rsvp tool', () => {
     const handlers = attachTool(client);
     await expect(
       handlers.get('signupgenius_rsvp')!({
-        url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co',
+        url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
       }),
     ).rejects.toThrow(/Sign up failed|RSVP submit failed/i);
+  });
+
+  it('warns against a blind resend when the submit throws and the re-read cannot tell (#234)', async () => {
+    // A thrown submit may still have committed server-side; a resend creates
+    // a second RSVP (rsvpid:0), so the error must not invite one.
+    const client = new SignUpGeniusClient(sessionAccount);
+    let listCalls = 0;
+    vi.spyOn(client, 'request').mockImplementation(async (p, opts) => {
+      if (p === '/signups/signedupfor') {
+        listCalls++;
+        if (listCalls > 1) throw new Error('HTTP 503');
+        return { data: [], message: [], success: true } as never;
+      }
+      if (opts?.legacyAction === 's.getSignupInfo') {
+        return { data: RSVP_INFO, message: [], success: true } as never;
+      }
+      throw new Error('HTTP 502');
+    });
+    vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
+    const handlers = attachTool(client);
+    const err = (await handlers
+      .get('signupgenius_rsvp')!({
+        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
+      })
+      .catch((e: Error) => e)) as Error;
+    expect(err.message).toMatch(/RSVP submit failed: HTTP 502/);
+    expect(err.message).toMatch(/may still have been recorded/);
+    expect(err.message).toMatch(/HTTP 503/);
+    expect(err.message).toMatch(/signupgenius_list_signedupfor/);
+  });
+
+  it('refuses to RSVP again when the member already has a response on the sheet (#234)', async () => {
+    const { client, requestSpy, preSpy } = makeClient(sessionAccount, [
+      { signupid: 11111111, rsvpid: 0, signupitems: [] },
+      { signupid: 63774883, rsvpid: 555, rsvpvalue: 'y', rsvpcount: 2, rsvpchildcount: 1 },
+    ]);
+    const handlers = attachTool(client);
+    for (const confirm of [undefined, true]) {
+      await expect(
+        handlers.get('signupgenius_rsvp')!({
+          url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm,
+        }),
+      ).rejects.toThrow(/already responded.*rsvpid 555/is);
+    }
+    expect(requestSpy).not.toHaveBeenCalledWith('', expect.objectContaining({
+      legacyAction: 's.processSignUpFormHandler',
+    }));
+    // Refused before PreProcessSignup marks the sheet as being processed.
+    expect(preSpy).not.toHaveBeenCalled();
+  });
+
+  it('ignores slot entries on the same sheet id that carry no RSVP', async () => {
+    const { client } = makeClient(sessionAccount, [
+      { signupid: 63774883, rsvpid: 0, rsvpvalue: '', signupitems: [] },
+    ]);
+    const handlers = attachTool(client);
+    const result = (await handlers.get('signupgenius_rsvp')!({
+      url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0].text).duplicateCheck).toMatch(/no existing response/);
+  });
+
+  it('proceeds but says the duplicate check was skipped when signedupfor is unreadable', async () => {
+    const { client } = makeClient(sessionAccount, { unexpected: 'shape' });
+    const handlers = attachTool(client);
+    const result = (await handlers.get('signupgenius_rsvp')!({
+      url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
+    })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0].text).duplicateCheck).toMatch(/could not check/);
+  });
+
+  it('tells the caller NOT to resend when the failed submit actually landed (#234)', async () => {
+    const client = new SignUpGeniusClient(sessionAccount);
+    let listCalls = 0;
+    vi.spyOn(client, 'request').mockImplementation(async (p, opts) => {
+      if (p === '/signups/signedupfor') {
+        listCalls++;
+        const data = listCalls === 1 ? [] : [{ signupid: 63774883, rsvpid: 777, rsvpvalue: 'y' }];
+        return { data, message: [], success: true } as never;
+      }
+      if (opts?.legacyAction === 's.getSignupInfo') {
+        return { data: RSVP_INFO, message: [], success: true } as never;
+      }
+      throw new Error('HTTP 502');
+    });
+    vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
+    const handlers = attachTool(client);
+    await expect(
+      handlers.get('signupgenius_rsvp')!({
+        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
+      }),
+    ).rejects.toThrow(/IS now recorded.*do NOT resend/is);
+  });
+
+  it('reports a plain failure when the re-read shows no response landed', async () => {
+    const client = new SignUpGeniusClient(sessionAccount);
+    vi.spyOn(client, 'request').mockImplementation(async (p, opts) => {
+      if (p === '/signups/signedupfor') return { data: [], message: [], success: true } as never;
+      if (opts?.legacyAction === 's.getSignupInfo') {
+        return { data: RSVP_INFO, message: [], success: true } as never;
+      }
+      throw new Error('HTTP 400 bad field');
+    });
+    vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
+    const handlers = attachTool(client);
+    const err = (await handlers.get('signupgenius_rsvp')!({
+      url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
+    }).catch((e: Error) => e)) as Error;
+    expect(err.message).toMatch(/RSVP submit failed: HTTP 400 bad field/);
+    expect(err.message).toMatch(/no response from you is listed/);
+  });
+
+  it('handles a non-Error submit rejection', async () => {
+    const client = new SignUpGeniusClient(sessionAccount);
+    vi.spyOn(client, 'request').mockImplementation(async (_p, opts) => {
+      if (opts?.legacyAction === 's.getSignupInfo') {
+        return { data: RSVP_INFO, message: [], success: true } as never;
+      }
+      throw 'plain-string failure';
+    });
+    vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
+    const handlers = attachTool(client);
+    await expect(
+      handlers.get('signupgenius_rsvp')!({
+        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
+      }),
+    ).rejects.toThrow(/RSVP submit failed: plain-string failure/);
   });
 
   it('falls back to "unknown" when the server failure has no detail', async () => {
@@ -281,7 +476,7 @@ describe('signupgenius_rsvp tool', () => {
     await expect(
       handlers.get('signupgenius_rsvp')!({
         url: URL_FULL, response: 'maybe',
-        firstname: 'A', lastname: 'B', email: 'x@y.co',
+        firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
       }),
     ).rejects.toThrow(/unknown/i);
   });
@@ -337,5 +532,46 @@ describe('SignUpGeniusClient.preProcessSignUp', () => {
   it('refuses to run in key mode', async () => {
     const client = new SignUpGeniusClient(keyAccount);
     await expect(client.preProcessSignUp(SLUG)).rejects.toThrow(/session/i);
+  });
+});
+
+describe('describeResponse', () => {
+  it('names each response letter and defaults missing counts', () => {
+    expect(describeResponse({ rsvpid: 1, rsvpvalue: 'Y', rsvpcount: 2, rsvpchildcount: 1 })).toBe(
+      'rsvpid 1, response yes, 2 adult(s), 1 child(ren)',
+    );
+    expect(describeResponse({ rsvpid: 2, rsvpvalue: 'n' })).toMatch(/response no, 0 adult\(s\), 0 child/);
+    expect(describeResponse({ rsvpid: 3, rsvpvalue: 'm' })).toMatch(/response maybe/);
+    expect(describeResponse({})).toBe('rsvpid ?, response unknown, 0 adult(s), 0 child(ren)');
+  });
+});
+
+describe('findOwnResponse', () => {
+  function clientReturning(impl: () => Promise<unknown>) {
+    const client = new SignUpGeniusClient(sessionAccount);
+    vi.spyOn(client, 'request').mockImplementation(impl as never);
+    return client;
+  }
+
+  it('matches a row by rsvpvalue alone when rsvpid is absent, skipping null rows', async () => {
+    const client = clientReturning(async () => ({
+      data: [null, { signupid: 63774883, rsvpvalue: 'm' }],
+      message: [],
+      success: true,
+    }));
+    expect(await findOwnResponse(client, 63774883)).toEqual({
+      status: 'found',
+      row: { signupid: 63774883, rsvpvalue: 'm' },
+    });
+  });
+
+  it('reports a non-Error rejection as unknown', async () => {
+    const client = clientReturning(async () => {
+      throw 'boom';
+    });
+    expect(await findOwnResponse(client, 1)).toEqual({
+      status: 'unknown',
+      reason: 'signedupfor lookup failed: boom',
+    });
   });
 });

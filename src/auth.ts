@@ -147,7 +147,9 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
   if (!fetchproxyDisabled()) {
     return {
       account: browserAccount(),
-      refresh: liftBrowserSession,
+      // A fresh closure per resolveAuth(): it carries the rotated refresh
+      // token for THIS process (#235), and must not leak between callers.
+      refresh: createBrowserRefresher(),
       source: 'fetchproxy',
     };
   }
@@ -225,10 +227,15 @@ function jwtExpiry(token: string): number | null {
  *     token afterwards. (Renewing the JWT does not, however, revive a lapsed
  *     ColdFusion session — that is a separate lifetime, see the module docs.)
  */
-async function renewIfStale(accessToken: string, refreshToken?: string): Promise<string> {
+async function renewIfStale(
+  accessToken: string,
+  refreshToken?: string,
+): Promise<{ accessToken: string; refreshToken?: string; renewed: boolean }> {
   const exp = jwtExpiry(accessToken);
   // Opaque token, or still comfortably valid → use what the browser gave us.
-  if (exp === null || exp - Date.now() / 1000 > RENEW_SKEW_SECONDS) return accessToken;
+  if (exp === null || exp - Date.now() / 1000 > RENEW_SKEW_SECONDS) {
+    return { accessToken, refreshToken, renewed: false };
+  }
   if (!refreshToken) {
     throw new Error(
       'The signupgenius.com session cookie in your browser has expired and no refreshToken ' +
@@ -242,7 +249,7 @@ async function renewIfStale(accessToken: string, refreshToken?: string): Promise
     body: JSON.stringify({ refreshToken, token: accessToken }),
   });
   const body = (await res.json().catch(() => null)) as
-    | { success?: boolean; data?: { response?: { token?: string } } }
+    | { success?: boolean; data?: { response?: { token?: string; refreshtoken?: string } } }
     | null;
   const renewed = body?.data?.response?.token;
   if (!res.ok || body?.success !== true || !renewed) {
@@ -251,7 +258,10 @@ async function renewIfStale(accessToken: string, refreshToken?: string): Promise
         'open signupgenius.com in your browser and retry.',
     );
   }
-  return renewed;
+  // The exchange ROTATES the refresh token. Hand the new one back so the
+  // caller can use it next time instead of the (possibly spent) browser cookie.
+  const rotated = body?.data?.response?.refreshtoken;
+  return { accessToken: renewed, refreshToken: rotated || refreshToken, renewed: true };
 }
 
 /**
@@ -302,14 +312,42 @@ const liftDeclaredScope = createSessionLifter({
  * userland" shape createSessionLifter's docs describe: the library owns HOW to
  * read the browser, this owns what the values mean once read.
  */
-async function liftBrowserSession(): Promise<BrowserSession> {
+function createBrowserRefresher(): () => Promise<BrowserSession> {
+  /**
+   * #235: the last renewal this process performed, keyed by the browser
+   * cookies it started from. We cannot write the rotated tokens back into the
+   * user's browser, so an idle tab keeps offering the SAME stale access token
+   * and the refresh token we already spent. While the browser still shows
+   * exactly those cookies, continue from our own (rotated) pair instead; once
+   * the tab's SPA renews its own cookies, the browser's values win again.
+   */
+  let rotated:
+    | { fromAccess: string; fromRefresh?: string; accessToken: string; refreshToken?: string }
+    | undefined;
+  return async function liftBrowserSession(): Promise<BrowserSession> {
     try {
       const session = await liftDeclaredScope();
 
       const lifted = session.cookies['accessToken'] ?? session.cookies['MTOKEN'];
-      const accessToken = lifted
-        ? await renewIfStale(lifted, session.cookies['refreshToken'])
-        : lifted;
+      const browserRefresh = session.cookies['refreshToken'];
+      let accessToken = lifted;
+      if (lifted) {
+        const carryOver =
+          rotated && rotated.fromAccess === lifted && rotated.fromRefresh === browserRefresh;
+        const next = await renewIfStale(
+          carryOver ? rotated!.accessToken : lifted,
+          carryOver ? rotated!.refreshToken : browserRefresh,
+        );
+        accessToken = next.accessToken;
+        if (next.renewed) {
+          rotated = {
+            fromAccess: lifted,
+            fromRefresh: browserRefresh,
+            accessToken: next.accessToken,
+            refreshToken: next.refreshToken,
+          };
+        }
+      }
       if (!accessToken) {
         // "retry" is honest advice now: the lift runs per login, so signing
         // in and re-running the tool genuinely picks up the new session. No
@@ -346,4 +384,5 @@ async function liftBrowserSession(): Promise<BrowserSession> {
           `and fetchproxy lift failed: ${msg}`,
       );
     }
+  };
 }
