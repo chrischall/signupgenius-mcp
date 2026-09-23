@@ -359,6 +359,101 @@ describe('resolveAuth', () => {
       fetchSpy.mockRestore();
     });
 
+    // #235: /v3/auth/refresh ROTATES the refresh token. The browser cookie is
+    // not updated by us, so an idle tab keeps offering the refresh token we
+    // already spent. Later renewals in this process must use the rotated one.
+    const refreshResponse = (token: string, refreshtoken?: string) =>
+      new Response(
+        JSON.stringify({ success: true, data: { response: { token, refreshtoken } } }),
+        { status: 200 },
+      ) as unknown as Response;
+
+    it('uses the ROTATED refresh token when the browser still offers the spent one', async () => {
+      const stale = makeJwt(-420);
+      const renewed1 = makeJwt(30); // inside the skew window → renews again next time
+      const renewed2 = makeJwt(1800);
+      bootstrapMock.mockResolvedValue(okCookies({ accessToken: stale, refreshToken: 'rt-1' }));
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(refreshResponse(renewed1, 'rt-2'))
+        .mockResolvedValueOnce(refreshResponse(renewed2, 'rt-3'));
+
+      const { refresh } = await resolveAuth();
+      expect((await refresh!()).accessToken).toBe(renewed1);
+      expect((await refresh!()).accessToken).toBe(renewed2);
+
+      const second = JSON.parse((fetchSpy.mock.calls[1] as [string, RequestInit])[1].body as string);
+      expect(second).toEqual({ refreshToken: 'rt-2', token: renewed1 });
+      fetchSpy.mockRestore();
+    });
+
+    it('reuses a still-valid renewed token instead of re-exchanging the stale cookie', async () => {
+      const stale = makeJwt(-420);
+      const renewed = makeJwt(1800);
+      bootstrapMock.mockResolvedValue(
+        okCookies({ accessToken: stale, refreshToken: 'rt-1', cfid: 'c' }),
+      );
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(refreshResponse(renewed, 'rt-2'));
+
+      const { refresh } = await resolveAuth();
+      await refresh!();
+      const again = await refresh!();
+      expect(again.accessToken).toBe(renewed);
+      expect(again.cookieHeader).toBe(`accessToken=${renewed}; cfid=c`);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      fetchSpy.mockRestore();
+    });
+
+    it('prefers the browser once its SPA has renewed its own cookies', async () => {
+      const stale = makeJwt(-420);
+      const renewed = makeJwt(1800);
+      const browserFresh = makeJwt(1700);
+      bootstrapMock
+        .mockResolvedValueOnce(okCookies({ accessToken: stale, refreshToken: 'rt-1' }))
+        .mockResolvedValueOnce(okCookies({ accessToken: browserFresh, refreshToken: 'rt-browser' }));
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(refreshResponse(renewed, 'rt-2'));
+
+      const { refresh } = await resolveAuth();
+      await refresh!();
+      expect((await refresh!()).accessToken).toBe(browserFresh);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      fetchSpy.mockRestore();
+    });
+
+    it('keeps using the same refresh token when the exchange does not rotate it', async () => {
+      const stale = makeJwt(-420);
+      const renewed1 = makeJwt(30);
+      bootstrapMock.mockResolvedValue(okCookies({ accessToken: stale, refreshToken: 'rt-1' }));
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(refreshResponse(renewed1))
+        .mockResolvedValueOnce(refreshResponse(makeJwt(1800)));
+      const { refresh } = await resolveAuth();
+      await refresh!();
+      await refresh!();
+      const second = JSON.parse((fetchSpy.mock.calls[1] as [string, RequestInit])[1].body as string);
+      expect(second).toEqual({ refreshToken: 'rt-1', token: renewed1 });
+      fetchSpy.mockRestore();
+    });
+
+    it('does not leak rotation state between resolveAuth() calls', async () => {
+      const stale = makeJwt(-420);
+      bootstrapMock.mockResolvedValue(okCookies({ accessToken: stale, refreshToken: 'rt-1' }));
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(refreshResponse(makeJwt(1800), 'rt-2'))
+        .mockResolvedValueOnce(refreshResponse(makeJwt(1800), 'rt-9'));
+      await (await resolveAuth()).refresh!();
+      await (await resolveAuth()).refresh!();
+      const second = JSON.parse((fetchSpy.mock.calls[1] as [string, RequestInit])[1].body as string);
+      expect(second.refreshToken).toBe('rt-1');
+      fetchSpy.mockRestore();
+    });
+
     it('explains what to do when the token is stale and no refreshToken exists', async () => {
       bootstrapMock.mockResolvedValue(okCookies({ accessToken: makeJwt(-60) }));
       const { refresh } = await resolveAuth();
