@@ -325,6 +325,45 @@ describe('signupgenius_rsvp tool', () => {
     ).rejects.toThrow(/Sign up failed|RSVP submit failed/i);
   });
 
+  it('warns against a blind resend when the submit throws (#234)', async () => {
+    // A thrown submit may still have committed server-side; a resend creates
+    // a second RSVP (rsvpid:0), so the error must not invite one.
+    const client = new SignUpGeniusClient(sessionAccount);
+    vi.spyOn(client, 'request').mockImplementation(async (_p, opts) => {
+      if (opts?.legacyAction === 's.getSignupInfo') {
+        return { data: RSVP_INFO, message: [], success: true } as never;
+      }
+      throw new Error('HTTP 502');
+    });
+    vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
+    const handlers = attachTool(client);
+    const err = (await handlers
+      .get('signupgenius_rsvp')!({
+        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
+      })
+      .catch((e: Error) => e)) as Error;
+    expect(err.message).toMatch(/RSVP submit failed: HTTP 502/);
+    expect(err.message).toMatch(/may still have been recorded/);
+    expect(err.message).toMatch(/signupgenius_list_signedupfor/);
+  });
+
+  it('handles a non-Error submit rejection', async () => {
+    const client = new SignUpGeniusClient(sessionAccount);
+    vi.spyOn(client, 'request').mockImplementation(async (_p, opts) => {
+      if (opts?.legacyAction === 's.getSignupInfo') {
+        return { data: RSVP_INFO, message: [], success: true } as never;
+      }
+      throw 'plain-string failure';
+    });
+    vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
+    const handlers = attachTool(client);
+    await expect(
+      handlers.get('signupgenius_rsvp')!({
+        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
+      }),
+    ).rejects.toThrow(/RSVP submit failed: plain-string failure/);
+  });
+
   it('falls back to "unknown" when the server failure has no detail', async () => {
     const client = new SignUpGeniusClient(sessionAccount);
     vi.spyOn(client, 'request').mockImplementation(async (_p, opts) => {

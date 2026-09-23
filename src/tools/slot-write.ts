@@ -4,7 +4,7 @@ import type { SignUpGeniusClient } from '../client.js';
 import { textContent } from './_shared.js';
 import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
 import type { Fetcher } from './sug-legacy.js';
-import { fetchAllParticipants } from './slots.js';
+import { fetchAllParticipants, type Participant } from './slots.js';
 
 /**
  * Slot claim + release — the two core participant WRITES.
@@ -229,6 +229,48 @@ const releaseSchema = z.object({
   confirm: z.boolean().optional().describe('Must be true to actually withdraw.'),
 });
 
+type OwnEntryLookup =
+  | { status: 'found'; entry: Participant }
+  | { status: 'none' }
+  | { status: 'unknown'; reason: string };
+
+/**
+ * Find the signed-in member's entry on one slot, if any. Never throws — an
+ * unreadable identity or participant list comes back as `unknown` so the
+ * caller decides how much to trust the absence of a match.
+ */
+async function findOwnEntry(
+  client: SignUpGeniusClient,
+  fetcher: Fetcher,
+  listid: number,
+  slotitemid: number,
+): Promise<OwnEntryLookup> {
+  let myId: unknown;
+  try {
+    const profileRes = await client.request<{ id?: number; memberid?: number }>(
+      '/member/profile',
+    );
+    myId = profileRes.data?.id ?? profileRes.data?.memberid;
+  } catch (err) {
+    return { status: 'unknown', reason: `profile lookup failed: ${errMessage(err)}` };
+  }
+  if (typeof myId !== 'number') {
+    return { status: 'unknown', reason: 'signed-in member id unavailable' };
+  }
+  let entries: Participant[];
+  try {
+    entries = await fetchAllParticipants(fetcher, listid, slotitemid);
+  } catch (err) {
+    return { status: 'unknown', reason: `participant lookup failed: ${errMessage(err)}` };
+  }
+  const entry = entries.find((p) => p.member_id === myId);
+  return entry ? { status: 'found', entry } : { status: 'none' };
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export function registerSlotWriteTools(
   server: McpServer,
   client: SignUpGeniusClient,
@@ -314,6 +356,22 @@ export function registerSlotWriteTools(
         customFields: args.customFields ?? [],
       });
 
+      // #234: a claim is always a FRESH entry (imid/rsvpid 0), so a retry after
+      // a lost response would book the member a second time. Look for an entry
+      // the signed-in member already holds on this slot before previewing or
+      // submitting. Best-effort: if identity or the participant list can't be
+      // read, the claim still proceeds, but the preview says the check was
+      // skipped rather than implying it passed.
+      const mine = await findOwnEntry(client, fetcher, parts.signupid, args.slotitemid);
+      if (mine.status === 'found') {
+        throw new Error(
+          `You are already signed up for slot ${args.slotitemid} on ${parts.urlid} ` +
+            `(item_member_id ${mine.entry.item_member_id}, ${mine.entry.quantity} spot(s), ` +
+            `as "${mine.entry.display_name}"). Not claiming it again. To change the entry, ` +
+            'withdraw it with signupgenius_release_slot first.',
+        );
+      }
+
       const preview = {
         action: 'claim',
         signupid: parts.signupid,
@@ -330,6 +388,10 @@ export function registerSlotWriteTools(
         quantity,
         comment: args.comment ?? '',
         customFields: payload.customFields,
+        duplicateCheck:
+          mine.status === 'none'
+            ? 'no existing entry for the signed-in member on this slot'
+            : `could not check for an existing entry (${mine.reason})`,
       };
 
       if (!args.confirm) {
@@ -359,6 +421,25 @@ export function registerSlotWriteTools(
         });
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
+        // The failure may be ambiguous: the server can commit the claim and
+        // still answer with a 5xx / non-JSON body. Re-read before inviting a
+        // resend, because a resend books a SECOND entry.
+        const after = await findOwnEntry(client, fetcher, parts.signupid, args.slotitemid);
+        if (after.status === 'found') {
+          throw new Error(
+            `Slot claim reported an error (${detail}), but an entry for you IS now listed on the ` +
+              `slot (item_member_id ${after.entry.item_member_id}, ${after.entry.quantity} spot(s)). ` +
+              'The claim most likely went through — do NOT resend it. Confirm with ' +
+              'signupgenius_list_slots.',
+          );
+        }
+        if (after.status === 'unknown') {
+          throw new Error(
+            `Slot claim failed: ${detail}. The tool could not confirm whether the claim was ` +
+              `recorded anyway (${after.reason}). Check signupgenius_list_slots for your entry ` +
+              'before resending — a resend after a claim that did land books a second entry.',
+          );
+        }
         throw new Error(
           `Slot claim failed: ${detail}. If this mentions a missing or unknown field, read ` +
             'signupgenius_get_public_signup.customFields and resend with every required answer ' +

@@ -283,10 +283,23 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         });
       }
 
-      const result = await client.request('', {
-        legacyAction: 's.processSignUpFormHandler',
-        body: payload,
-      });
+      let result;
+      try {
+        result = await client.request('', {
+          legacyAction: 's.processSignUpFormHandler',
+          body: payload,
+        });
+      } catch (err) {
+        // #234: every RSVP is sent as a NEW response (rsvpid/imid 0), and the
+        // server can commit and still answer with a 5xx / non-JSON body. A
+        // blind resend would then add a second response, so say so.
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `RSVP submit failed: ${detail}. The RSVP may still have been recorded — check ` +
+            'signupgenius_list_signedupfor (or the sheet in the SignUpGenius UI) before ' +
+            'resending, because a resend adds a second response.',
+        );
+      }
       if (!result.success) {
         const detail = result.message.length > 0 ? result.message.join('; ') : 'unknown';
         throw new Error(`RSVP submit failed: ${detail}`);

@@ -180,6 +180,7 @@ function claimSetup(over: Record<string, unknown> = {}) {
         if ('profile' in over) {
           const p = over.profile as { throws?: boolean; data?: unknown };
           if (p?.throws) throw new Error('profile unavailable');
+          if ((p as { throwsRaw?: boolean })?.throwsRaw) throw 'profile down';
           return { success: true, message: [], data: p?.data };
         }
         return { success: true, message: [], data: { id: 4262737 } };
@@ -201,9 +202,14 @@ function claimSetup(over: Record<string, unknown> = {}) {
   return { handlers, seen, pre, del };
 }
 
+/** claimSetup for the claim tests: the slot starts EMPTY unless a test says otherwise. */
+function claimOnly(over: Record<string, unknown> = {}) {
+  return claimSetup({ participantPages: [[]], ...over });
+}
+
 describe('signupgenius_claim_slot', () => {
   it('previews without writing when confirm is absent', async () => {
-    const { handlers, seen, pre } = claimSetup();
+    const { handlers, seen, pre } = claimOnly();
     const res = await handlers.get('signupgenius_claim_slot')!(CLAIM);
     const out = JSON.parse(res.content[0].text);
 
@@ -213,11 +219,15 @@ describe('signupgenius_claim_slot', () => {
     expect(out.signingUpAs).toBe('Chris Hall <chris@example.com>');
     // Nothing that mutates state was called.
     expect(pre).not.toHaveBeenCalled();
-    expect(seen.map((s) => s.action)).toEqual(['s.getSignupInfo', 's.getSignUpFormItems']);
+    expect(seen.map((s) => s.action)).toEqual([
+      's.getSignupInfo',
+      's.getSignUpFormItems',
+      'GET /member/profile',
+    ]);
   });
 
   it('submits only when confirm is true, after PreProcessSignup', async () => {
-    const { handlers, seen, pre } = claimSetup();
+    const { handlers, seen, pre } = claimOnly();
     const res = await handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true });
     const out = JSON.parse(res.content[0].text);
 
@@ -228,7 +238,7 @@ describe('signupgenius_claim_slot', () => {
   });
 
   it('queries form items with a real slot-item id, not an empty selection', async () => {
-    const { handlers, seen } = claimSetup();
+    const { handlers, seen } = claimOnly();
     await handlers.get('signupgenius_claim_slot')!(CLAIM);
     const items = seen.find((s) => s.action === 's.getSignUpFormItems')!;
     // siid: 0 / "" / [] all mean "nothing selected" and return no rows.
@@ -236,21 +246,21 @@ describe('signupgenius_claim_slot', () => {
   });
 
   it('refuses an RSVP-style sheet and points at the right tool', async () => {
-    const { handlers } = claimSetup({ info: { ...INFO, useRSVP: 1 } });
+    const { handlers } = claimOnly({ info: { ...INFO, useRSVP: 1 } });
     await expect(handlers.get('signupgenius_claim_slot')!(CLAIM)).rejects.toThrow(
       /RSVP-style .* Use signupgenius_rsvp/s,
     );
   });
 
   it('refuses when the slot id no longer resolves', async () => {
-    const { handlers } = claimSetup({ items: [] });
+    const { handlers } = claimOnly({ items: [] });
     await expect(handlers.get('signupgenius_claim_slot')!(CLAIM)).rejects.toThrow(
       /was not found/,
     );
   });
 
   it('refuses to overbook a slot', async () => {
-    const { handlers } = claimSetup();
+    const { handlers } = claimOnly();
     await expect(
       handlers.get('signupgenius_claim_slot')!({ ...CLAIM, quantity: 3 }),
     ).rejects.toThrow(/only 1 spot\(s\) left but 3/);
@@ -259,7 +269,7 @@ describe('signupgenius_claim_slot', () => {
   it('allows a slot whose availability is unreported (unlimited rows)', async () => {
     // Coercing a missing AVAILABLEQTY to 0 made unlimited slots permanently
     // unclaimable, with an error that said the opposite of the truth.
-    const { handlers } = claimSetup({ items: [{ ...ITEM, AVAILABLEQTY: undefined }] });
+    const { handlers } = claimOnly({ items: [{ ...ITEM, AVAILABLEQTY: undefined }] });
     const out = JSON.parse(
       (await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text,
     );
@@ -268,19 +278,19 @@ describe('signupgenius_claim_slot', () => {
   });
 
   it('refuses when one slotitemid resolves to several form rows', async () => {
-    const { handlers } = claimSetup({ items: [ITEM, { ...ITEM, SLOTITEMID: 999 }] });
+    const { handlers } = claimOnly({ items: [ITEM, { ...ITEM, SLOTITEMID: 999 }] });
     await expect(handlers.get('signupgenius_claim_slot')!(CLAIM)).rejects.toThrow(
       /resolved to 2 form rows/,
     );
   });
 
   it('treats a non-array items payload as "not found"', async () => {
-    const { handlers } = claimSetup({ items: null });
+    const { handlers } = claimOnly({ items: null });
     await expect(handlers.get('signupgenius_claim_slot')!(CLAIM)).rejects.toThrow(/was not found/);
   });
 
   it('handles a non-Error rejection value', async () => {
-    const { handlers } = claimSetup({ submitThrowsRaw: true });
+    const { handlers } = claimOnly({ submitThrowsRaw: true });
     await expect(
       handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }),
     ).rejects.toThrow(/Slot claim failed: plain-string failure/);
@@ -290,13 +300,94 @@ describe('signupgenius_claim_slot', () => {
     // The real client throws on a success:false envelope, so a
     // `if (!result.success)` check would be dead code and this guidance —
     // the most likely rejection — would never reach the caller.
-    const { handlers } = claimSetup({
+    const { handlers } = claimOnly({
       submit: undefined,
       submitThrows: 'SignUpGenius error: key [PHONE] doesn’t exist',
     });
     await expect(
       handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }),
     ).rejects.toThrow(/Slot claim failed.*PHONE.*customFields/s);
+  });
+
+  describe('duplicate-entry guard (#234)', () => {
+    const MINE_ROW = { firstname: 'Chris', lastname: 'Hall', myqty: 1, itemmemberid: 2000004, memberid: 4262737 };
+    const OTHER_ROW = { firstname: 'Someone', lastname: 'Else', myqty: 1, itemmemberid: 2000005, memberid: 987654 };
+
+    it('refuses to preview a claim the signed-in member already holds', async () => {
+      const { handlers, pre } = claimOnly({ participantPages: [[OTHER_ROW, MINE_ROW]] });
+      await expect(handlers.get('signupgenius_claim_slot')!(CLAIM)).rejects.toThrow(
+        /already signed up.*item_member_id 2000004/s,
+      );
+      expect(pre).not.toHaveBeenCalled();
+    });
+
+    it('refuses a confirmed claim the member already holds, without submitting', async () => {
+      const { handlers, pre, seen } = claimOnly({ participantPages: [[MINE_ROW]] });
+      await expect(
+        handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }),
+      ).rejects.toThrow(/already signed up/);
+      expect(pre).not.toHaveBeenCalled();
+      expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(false);
+    });
+
+    it('is not tripped by other people on the slot', async () => {
+      const { handlers } = claimOnly({ participantPages: [[OTHER_ROW]] });
+      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
+      expect(out.submitted).toBe(false);
+      expect(out.duplicateCheck).toBe('no existing entry for the signed-in member on this slot');
+    });
+
+    it('proceeds but says so when the check cannot run (participants unavailable)', async () => {
+      const { handlers } = claimOnly({ participantsThrow: true });
+      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
+      expect(out.submitted).toBe(false);
+      expect(out.duplicateCheck).toMatch(/could not check/);
+    });
+
+    it('proceeds but says so when the member id cannot be resolved', async () => {
+      const { handlers } = claimOnly({ profile: { data: {} } });
+      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
+      expect(out.duplicateCheck).toMatch(/could not check/);
+    });
+
+    it('proceeds but says so when the profile lookup throws', async () => {
+      const { handlers } = claimOnly({ profile: { throws: true } });
+      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
+      expect(out.duplicateCheck).toMatch(/could not check/);
+    });
+
+    it('reports a non-Error lookup failure verbatim', async () => {
+      const { handlers } = claimOnly({ profile: { throwsRaw: true } });
+      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
+      expect(out.duplicateCheck).toMatch(/profile lookup failed: profile down/);
+    });
+
+    it('after an ambiguous submit failure, reports a claim that DID land and says not to resend', async () => {
+      // Server committed, but the response was lost: the re-read finds our entry.
+      const { handlers } = claimOnly({
+        participantPages: [[], [MINE_ROW]],
+        submitThrows: 'SignUpGenius returned a non-JSON body',
+      });
+      const err = await handlers
+        .get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true })
+        .catch((e: Error) => e);
+      expect(err.message).toMatch(/IS now listed on the slot/);
+      expect(err.message).toMatch(/do NOT resend/i);
+      expect(err.message).not.toMatch(/resend with every required answer/);
+    });
+
+    it('after a failure it cannot re-check, warns to verify before resending', async () => {
+      const { handlers } = claimOnly({
+        participantsThrowAfter: 1,
+        submitThrows: 'network reset',
+      });
+      const err = await handlers
+        .get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true })
+        .catch((e: Error) => e);
+      expect(err.message).toMatch(/Slot claim failed: network reset/);
+      expect(err.message).toMatch(/could not confirm whether .* recorded/);
+      expect(err.message).toMatch(/signupgenius_list_slots/);
+    });
   });
 });
 
