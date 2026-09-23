@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.3](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.2...v2.1.3) (2026-09-23)
+
+
+### Bug Fixes
+
+* **claim_slot:** keep the custom-fields hint when a failed claim can't be re-checked ([#199](https://github.com/chrischall/signupgenius-mcp/issues/199)) ([d80b4e3](https://github.com/chrischall/signupgenius-mcp/commit/d80b4e3d119eaa6cc29034e7f337bd5fe828ff70))
+* stop duplicate claim_slot/rsvp entries, gate rsvp behind confirm, keep rotated refresh token ([#196](https://github.com/chrischall/signupgenius-mcp/issues/196)) ([e6ade95](https://github.com/chrischall/signupgenius-mcp/commit/e6ade95a48eda73ac9e1146b45d578485c9edcd7))
+
 ## [2.1.2](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.1...v2.1.2) (2026-09-23)
 
 
