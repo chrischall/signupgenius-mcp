@@ -475,7 +475,7 @@ export function registerSlotWriteTools(
 
       // Resolve WHO we are from the session rather than trusting the caller.
       // signupgenius_list_slots publishes every participant's item_member_id
-      // and member_id for any public sheet, so a model that picked the wrong
+      // for any public sheet, so a model that picked the wrong
       // row could otherwise ask us to withdraw a stranger's sign-up. The
       // server's authorization for s.DeletePerson is unverified (this path was
       // deliberately never exercised), so enforce ownership client-side too.
@@ -501,7 +501,7 @@ export function registerSlotWriteTools(
       // normal path nothing would have tied `itemMemberId` to us. Look the
       // entry up on the slot and check who it actually belongs to. This is the
       // guard that matters: signupgenius_list_slots publishes every
-      // participant's item_member_id and member_id for any public sheet, so a
+      // participant's item_member_id for any public sheet, so a
       // mis-picked row is a realistic way to delete a stranger's sign-up.
       const entries = await fetchAllParticipants(fetcher, parts.signupid, args.slotitemid);
       const entry = entries.find((p) => p.item_member_id === args.itemMemberId);
@@ -522,7 +522,7 @@ export function registerSlotWriteTools(
       if (entry.member_id !== myId) {
         throw new Error(
           `Refusing to withdraw: sign-up entry ${args.itemMemberId} ("${entry.display_name}") ` +
-            `belongs to member ${entry.member_id}, not the signed-in member (${myId}). ` +
+            'belongs to another member, not the signed-in member. ' +
             'This tool only removes the current user\'s own sign-up.',
         );
       }

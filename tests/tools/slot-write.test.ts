@@ -551,9 +551,12 @@ describe('signupgenius_release_slot', () => {
       ],
     });
     await expect(handlers.get('signupgenius_release_slot')!(REL, ACCEPT_CTX)).rejects.toThrow(
-      /belongs to member 987654, not the signed-in member \(4262737\)/,
+      /belongs to another member, not the signed-in member/,
     );
     expect(del).not.toHaveBeenCalled();
+    // …without echoing the stranger's stable member id back (PRIV-1).
+    const err = await handlers.get('signupgenius_release_slot')!(REL).catch((e: Error) => e);
+    expect(err.message).not.toMatch(/987654/);
   });
 
   it('refuses a guest entry that is not tied to a member account', async () => {

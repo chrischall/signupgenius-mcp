@@ -73,7 +73,22 @@ export interface Participant {
    * `signupgenius_release_slot` needs to withdraw a sign-up.
    */
   item_member_id?: number;
+  /**
+   * The participant's stable SignUpGenius account id. INTERNAL ONLY — used by
+   * the write tools' ownership / duplicate checks and stripped from every tool
+   * result by {@link toPublicParticipant}, because it correlates the same
+   * person across every public sheet they touch.
+   */
   member_id?: number;
+}
+
+/** A participant as `signupgenius_list_slots` returns it: no `member_id`. */
+export type PublicParticipant = Omit<Participant, 'member_id'>;
+
+/** Drop the internal-only `member_id` before a participant leaves the server. */
+export function toPublicParticipant(p: Participant): PublicParticipant {
+  const { member_id: _memberId, ...rest } = p;
+  return rest;
 }
 
 export interface SlotSummary {
@@ -103,7 +118,7 @@ export interface SlotSummary {
   participant_count: number;
   /** Owner's display preference. Names may still be readable via endpoint (2). */
   names_hidden: boolean;
-  participants?: Participant[];
+  participants?: PublicParticipant[];
 }
 
 interface RawSlotsEnvelope {
@@ -366,7 +381,10 @@ export function registerSlotTools(
           for (let i = next++; i < targets.length; i = next++) {
             const slot = targets[i];
             try {
-              slot.participants = await fetchAllParticipants(fetcher, signupid, slot.slotitemid);
+              // PRIV-1: strangers' member ids never leave the server.
+              slot.participants = (
+                await fetchAllParticipants(fetcher, signupid, slot.slotitemid)
+              ).map(toPublicParticipant);
             } catch {
               // One bad row degrades rather than failing the whole listing —
               // but record it, because `participants: undefined` otherwise
