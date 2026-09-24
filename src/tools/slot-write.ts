@@ -1,7 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { confirmTokenParam } from '@chrischall/mcp-utils';
 import type { SignUpGeniusClient } from '../client.js';
-import { textContent } from './_shared.js';
+import { confirmWrite, textContent } from './_shared.js';
 import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
 import type { Fetcher } from './sug-legacy.js';
 import { fetchAllParticipants, type Participant } from './slots.js';
@@ -40,8 +41,9 @@ import { fetchAllParticipants, type Participant } from './slots.js';
  * `s.processSignUpFormHandler` POST and the `s.DeletePerson` GET have
  * deliberately NOT been exercised against the server: doing so would claim and
  * then withdraw a real slot on someone else's live sheet. Both tools therefore
- * ship behind a mandatory `confirm: true` gate, and default to returning a
- * preview instead of writing.
+ * ship behind the fleet confirmation gate (`confirmWrite`): a prompt where the
+ * client supports elicitation, otherwise a preview + single-use `confirmToken`
+ * bound to the exact wire payload. Nothing is written on the first call.
  */
 
 /** Sign-up metadata needed to build a claim. From `s.getSignupInfo`. */
@@ -190,13 +192,7 @@ const claimSchema = z.object({
         'signupgenius_get_public_signup.customFields — omitting a required field makes ' +
         'the server reject the claim.',
     ),
-  confirm: z
-    .boolean()
-    .optional()
-    .describe(
-      'Must be true to actually submit. Omit (or false) to get a dry-run preview of ' +
-        'exactly what would be sent, including the identity and the slot.',
-    ),
+  confirmToken: confirmTokenParam,
 });
 
 const releaseSchema = z.object({
@@ -226,7 +222,7 @@ const releaseSchema = z.object({
       'Optional. The signed-in member id is resolved automatically; supplying a DIFFERENT ' +
         'one is rejected, because this tool only withdraws the current user\'s own sign-up.',
     ),
-  confirm: z.boolean().optional().describe('Must be true to actually withdraw.'),
+  confirmToken: confirmTokenParam,
 });
 
 type OwnEntryLookup =
@@ -285,16 +281,17 @@ export function registerSlotWriteTools(
     'signupgenius_claim_slot',
     {
       description:
-        'Claim (sign up for) a slot on a slot-based SignUpGenius sheet. ' +
-        'Two-step by design: call WITHOUT `confirm` first to get a preview of the ' +
-        'slot, identity and payload, show it to the user, then call again with ' +
-        'confirm:true. WRITES DATA — never call with confirm:true unless the user ' +
-        'has explicitly approved this specific slot. For Yes/No/Maybe headcount ' +
-        'sheets use signupgenius_rsvp instead.',
+        'Claim (sign up for) a slot on a slot-based SignUpGenius sheet. WRITES DATA the ' +
+        'organizer sees, so it asks the user to confirm first: a confirmation prompt where ' +
+        'the client supports one; otherwise the first call writes nothing and returns the ' +
+        'preview (sheet, slot, identity) and a confirmToken, and only a repeat call with the ' +
+        'same arguments plus that token submits — show the preview to the user and get their ' +
+        'approval first (MCP_CONFIRM_MODE). For Yes/No/Maybe headcount sheets use ' +
+        'signupgenius_rsvp instead.',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: claimSchema,
     },
-    async (raw) => {
+    async (raw, ctx) => {
       const args = claimSchema.parse(raw);
       const parts = parseSignUpUrl(args.url);
       const quantity = args.quantity ?? 1;
@@ -394,15 +391,22 @@ export function registerSlotWriteTools(
             : `could not check for an existing entry (${mine.reason})`,
       };
 
-      if (!args.confirm) {
-        return textContent({
-          ...preview,
-          submitted: false,
-          note:
-            'DRY RUN — nothing was written. Show this to the user and call again with ' +
-            'confirm:true to submit.',
-        });
-      }
+      // SEC-1: the gate binds the token to this tool, this slot and the exact
+      // wire payload (which carries the slot row, quantity, comment, identity
+      // and custom answers), so a token can never authorise a different claim.
+      const gate = await confirmWrite(ctx, client, {
+        tool: 'signupgenius_claim_slot',
+        action: 'signupgenius.claim_slot',
+        message:
+          `Review and confirm this sign-up for "${info.title}". The organizer will see ` +
+          'your name on the sheet.',
+        confirmationLabel: 'Claim this slot now.',
+        confirmToken: args.confirmToken,
+        target: `${parts.signupid}:${args.slotitemid}`,
+        payload,
+        preview,
+      });
+      if (gate) return gate;
 
       // Establishes the ColdFusion-session pointer the dispatcher requires
       // before it will accept a submission for this sign-up.
@@ -456,13 +460,16 @@ export function registerSlotWriteTools(
     'signupgenius_release_slot',
     {
       description:
-        'Withdraw (give up) a slot the user previously signed up for. ' +
-        'Call WITHOUT `confirm` first to preview which entry would be removed, ' +
-        'then again with confirm:true. WRITES DATA — this removes a real sign-up.',
+        'Withdraw (give up) a slot the user previously signed up for. WRITES DATA — this ' +
+        'removes a real sign-up, so it asks the user to confirm first: a confirmation prompt ' +
+        'where the client supports one; otherwise the first call removes nothing and returns ' +
+        'the preview (sheet, slot, whose entry) and a confirmToken, and only a repeat call ' +
+        'with the same arguments plus that token withdraws — show the preview to the user ' +
+        'and get their approval first (MCP_CONFIRM_MODE).',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: releaseSchema,
     },
-    async (raw) => {
+    async (raw, ctx) => {
       const args = releaseSchema.parse(raw);
       const parts = parseSignUpUrl(args.url);
 
@@ -529,16 +536,20 @@ export function registerSlotWriteTools(
         memberId: myId,
         withdrawing: { name: entry.display_name, spots: entry.quantity },
       };
-      if (!args.confirm) {
-        return textContent({
-          ...preview,
-          submitted: false,
-          note:
-            'DRY RUN — nothing was removed. Confirm the participant entry with the user ' +
-            '(signupgenius_list_slots shows item_member_id per person), then call again ' +
-            'with confirm:true.',
-        });
-      }
+      // SEC-1: bound to the exact s.DeletePerson arguments.
+      const gate = await confirmWrite(ctx, client, {
+        tool: 'signupgenius_release_slot',
+        action: 'signupgenius.release_slot',
+        message:
+          `Review and confirm withdrawing "${entry.display_name}" (${entry.quantity} spot(s)) ` +
+          `from this sign-up. The organizer will see the spot open up again.`,
+        confirmationLabel: 'Withdraw this sign-up now.',
+        confirmToken: args.confirmToken,
+        target: `${parts.signupid}:${args.itemMemberId}`,
+        payload: { signupid: parts.signupid, itemMemberId: args.itemMemberId, memberId: myId },
+        preview,
+      });
+      if (gate) return gate;
 
       await client.deletePerson(parts.signupid, args.itemMemberId, myId);
 

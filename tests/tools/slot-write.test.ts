@@ -6,7 +6,17 @@ import {
   type FormItem,
 } from '../../src/tools/slot-write.js';
 import { parseSignUpUrl } from '../../src/tools/public-signup.js';
-import { setupTools, sessionAccount, keyAccount } from './_setup.js';
+import {
+  setupTools,
+  sessionAccount,
+  keyAccount,
+  ACCEPT_CTX,
+  DECLINE_CTX,
+  ELICIT_CTX,
+  TOKEN_CTX,
+  confirmViaToken,
+  parseText,
+} from './_setup.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -208,15 +218,17 @@ function claimOnly(over: Record<string, unknown> = {}) {
 }
 
 describe('signupgenius_claim_slot', () => {
-  it('previews without writing when confirm is absent', async () => {
+  it('previews without writing on the first call, returning a confirmToken', async () => {
     const { handlers, seen, pre } = claimOnly();
-    const res = await handlers.get('signupgenius_claim_slot')!(CLAIM);
-    const out = JSON.parse(res.content[0].text);
+    const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM, TOKEN_CTX));
 
-    expect(out.submitted).toBe(false);
-    expect(out.note).toMatch(/DRY RUN/);
-    expect(out.slot).toMatchObject({ label: 'Chaperone', availableBefore: 1 });
-    expect(out.signingUpAs).toBe('Chris Hall <chris@example.com>');
+    expect(out.status).toBe('confirmation-required');
+    expect(out.dispatched).toBe(false);
+    expect(typeof out.confirmToken).toBe('string');
+    // The preview names the human-readable target, not only numeric ids.
+    expect(out.preview.title).toBe('Chaperones');
+    expect(out.preview.slot).toMatchObject({ label: 'Chaperone', availableBefore: 1 });
+    expect(out.preview.signingUpAs).toBe('Chris Hall <chris@example.com>');
     // Nothing that mutates state was called.
     expect(pre).not.toHaveBeenCalled();
     expect(seen.map((s) => s.action)).toEqual([
@@ -226,15 +238,99 @@ describe('signupgenius_claim_slot', () => {
     ]);
   });
 
-  it('submits only when confirm is true, after PreProcessSignup', async () => {
+  it('submits on the token round-trip, after PreProcessSignup', async () => {
     const { handlers, seen, pre } = claimOnly();
-    const res = await handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true });
-    const out = JSON.parse(res.content[0].text);
+    const out = parseText(await confirmViaToken(handlers.get('signupgenius_claim_slot')!, CLAIM));
 
     expect(out.submitted).toBe(true);
     expect(pre).toHaveBeenCalledWith(PARTS.urlid);
-    const submit = seen.find((s) => s.action === 's.processSignUpFormHandler')!;
-    expect(submit.body).toMatchObject({ type: 'standard', siid: ['1762735186'] });
+    const submits = seen.filter((s) => s.action === 's.processSignUpFormHandler');
+    expect(submits).toHaveLength(1);
+    expect(submits[0].body).toMatchObject({ type: 'standard', siid: ['1762735186'] });
+  });
+
+  it('submits in one call when an elicitation-capable caller accepted the prompt', async () => {
+    const { handlers, seen, pre } = claimOnly();
+    const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM, ACCEPT_CTX));
+    expect(out.submitted).toBe(true);
+    expect(pre).toHaveBeenCalledWith(PARTS.urlid);
+    expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(true);
+  });
+
+  describe('confirmation gate (SEC-1)', () => {
+    it('ignores a model-supplied confirm:true on the first call — nothing is submitted', async () => {
+      // The old gate trusted `confirm: true`, so an over-eager or injected
+      // model could claim a slot in one shot without any preview.
+      const { handlers, seen, pre } = claimOnly();
+      const out = parseText(
+        await handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }, TOKEN_CTX),
+      );
+      expect(out.status).toBe('confirmation-required');
+      expect(pre).not.toHaveBeenCalled();
+      expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(false);
+    });
+
+    it('asks an elicitation-capable caller instead of writing', async () => {
+      const { handlers, seen, pre } = claimOnly();
+      const res = (await handlers.get('signupgenius_claim_slot')!(CLAIM, ELICIT_CTX)) as unknown as {
+        resultType?: string;
+        inputRequests?: Record<string, unknown>;
+      };
+      expect(res.inputRequests).toHaveProperty('confirmation');
+      expect(pre).not.toHaveBeenCalled();
+      expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(false);
+    });
+
+    it('writes nothing when the prompt is declined', async () => {
+      const { handlers, seen, pre } = claimOnly();
+      const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM, DECLINE_CTX));
+      expect(out.cancelled).toBe(true);
+      expect(pre).not.toHaveBeenCalled();
+      expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(false);
+    });
+
+    it('rejects a token replayed against different arguments (bound to the payload)', async () => {
+      const { handlers, seen, pre } = claimOnly();
+      const h = handlers.get('signupgenius_claim_slot')!;
+      const phase1 = parseText(await h(CLAIM, TOKEN_CTX));
+      const out = parseText(
+        await h({ ...CLAIM, comment: 'something else', confirmToken: phase1.confirmToken }, TOKEN_CTX),
+      );
+      expect(out.error).toBe('DRAFT_CHANGED');
+      expect(pre).not.toHaveBeenCalled();
+      expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(false);
+    });
+
+    it('rejects a token for a different slot', async () => {
+      const { handlers, seen } = claimOnly();
+      const h = handlers.get('signupgenius_claim_slot')!;
+      const phase1 = parseText(await h(CLAIM, TOKEN_CTX));
+      const out = parseText(
+        await h({ ...CLAIM, slotitemid: 1762735187, confirmToken: phase1.confirmToken }, TOKEN_CTX),
+      );
+      // A different target is not "the same draft, edited" — it is refused outright.
+      expect(out.error).toBe('TOKEN_INVALID');
+      expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(false);
+    });
+
+    it('refuses to reuse a spent token', async () => {
+      const { handlers, seen } = claimOnly();
+      const h = handlers.get('signupgenius_claim_slot')!;
+      const phase1 = parseText(await h(CLAIM, TOKEN_CTX));
+      await h({ ...CLAIM, confirmToken: phase1.confirmToken }, TOKEN_CTX);
+      const again = parseText(await h({ ...CLAIM, confirmToken: phase1.confirmToken }, TOKEN_CTX));
+      expect(again.error).toBe('TOKEN_REUSED');
+      expect(seen.filter((s) => s.action === 's.processSignUpFormHandler')).toHaveLength(1);
+    });
+
+    it('refuses a token minted by another tool', async () => {
+      const { handlers, seen } = claimOnly();
+      const out = parseText(
+        await handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirmToken: 'forged' }, TOKEN_CTX),
+      );
+      expect(out.error).toBe('TOKEN_INVALID');
+      expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(false);
+    });
   });
 
   it('queries form items with a real slot-item id, not an empty selection', async () => {
@@ -270,11 +366,9 @@ describe('signupgenius_claim_slot', () => {
     // Coercing a missing AVAILABLEQTY to 0 made unlimited slots permanently
     // unclaimable, with an error that said the opposite of the truth.
     const { handlers } = claimOnly({ items: [{ ...ITEM, AVAILABLEQTY: undefined }] });
-    const out = JSON.parse(
-      (await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text,
-    );
-    expect(out.submitted).toBe(false);
-    expect(out.slot.availableBefore).toBe('unlimited/unreported');
+    const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM));
+    expect(out.dispatched).toBe(false);
+    expect(out.preview.slot.availableBefore).toBe('unlimited/unreported');
   });
 
   it('refuses when one slotitemid resolves to several form rows', async () => {
@@ -292,7 +386,7 @@ describe('signupgenius_claim_slot', () => {
   it('handles a non-Error rejection value', async () => {
     const { handlers } = claimOnly({ submitThrowsRaw: true });
     await expect(
-      handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }),
+      handlers.get('signupgenius_claim_slot')!(CLAIM, ACCEPT_CTX),
     ).rejects.toThrow(/Slot claim failed: plain-string failure/);
   });
 
@@ -305,7 +399,7 @@ describe('signupgenius_claim_slot', () => {
       submitThrows: 'SignUpGenius error: key [PHONE] doesn’t exist',
     });
     await expect(
-      handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }),
+      handlers.get('signupgenius_claim_slot')!(CLAIM, ACCEPT_CTX),
     ).rejects.toThrow(/Slot claim failed.*PHONE.*customFields/s);
   });
 
@@ -324,7 +418,7 @@ describe('signupgenius_claim_slot', () => {
     it('refuses a confirmed claim the member already holds, without submitting', async () => {
       const { handlers, pre, seen } = claimOnly({ participantPages: [[MINE_ROW]] });
       await expect(
-        handlers.get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true }),
+        handlers.get('signupgenius_claim_slot')!(CLAIM, ACCEPT_CTX),
       ).rejects.toThrow(/already signed up/);
       expect(pre).not.toHaveBeenCalled();
       expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(false);
@@ -332,33 +426,31 @@ describe('signupgenius_claim_slot', () => {
 
     it('is not tripped by other people on the slot', async () => {
       const { handlers } = claimOnly({ participantPages: [[OTHER_ROW]] });
-      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
-      expect(out.submitted).toBe(false);
+      const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM)).preview;
       expect(out.duplicateCheck).toBe('no existing entry for the signed-in member on this slot');
     });
 
     it('proceeds but says so when the check cannot run (participants unavailable)', async () => {
       const { handlers } = claimOnly({ participantsThrow: true });
-      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
-      expect(out.submitted).toBe(false);
+      const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM)).preview;
       expect(out.duplicateCheck).toMatch(/could not check/);
     });
 
     it('proceeds but says so when the member id cannot be resolved', async () => {
       const { handlers } = claimOnly({ profile: { data: {} } });
-      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
+      const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM)).preview;
       expect(out.duplicateCheck).toMatch(/could not check/);
     });
 
     it('proceeds but says so when the profile lookup throws', async () => {
       const { handlers } = claimOnly({ profile: { throws: true } });
-      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
+      const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM)).preview;
       expect(out.duplicateCheck).toMatch(/could not check/);
     });
 
     it('reports a non-Error lookup failure verbatim', async () => {
       const { handlers } = claimOnly({ profile: { throwsRaw: true } });
-      const out = JSON.parse((await handlers.get('signupgenius_claim_slot')!(CLAIM)).content[0].text);
+      const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM)).preview;
       expect(out.duplicateCheck).toMatch(/profile lookup failed: profile down/);
     });
 
@@ -369,7 +461,7 @@ describe('signupgenius_claim_slot', () => {
         submitThrows: 'SignUpGenius returned a non-JSON body',
       });
       const err = await handlers
-        .get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true })
+        .get('signupgenius_claim_slot')!(CLAIM, ACCEPT_CTX)
         .catch((e: Error) => e);
       expect(err.message).toMatch(/IS now listed on the slot/);
       expect(err.message).toMatch(/do NOT resend/i);
@@ -382,7 +474,7 @@ describe('signupgenius_claim_slot', () => {
         submitThrows: 'network reset',
       });
       const err = await handlers
-        .get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true })
+        .get('signupgenius_claim_slot')!(CLAIM, ACCEPT_CTX)
         .catch((e: Error) => e);
       expect(err.message).toMatch(/Slot claim failed: network reset/);
       expect(err.message).toMatch(/could not confirm whether .* recorded/);
@@ -398,7 +490,7 @@ describe('signupgenius_claim_slot', () => {
         submitThrows: "key [PHONE] doesn't exist",
       });
       const err = await handlers
-        .get('signupgenius_claim_slot')!({ ...CLAIM, confirm: true })
+        .get('signupgenius_claim_slot')!(CLAIM, ACCEPT_CTX)
         .catch((e: Error) => e);
       expect(err.message).toMatch(/could not confirm whether .* recorded/);
       expect(err.message).toMatch(/signupgenius_get_public_signup\.customFields/);
@@ -412,10 +504,39 @@ describe('signupgenius_release_slot', () => {
 
   it('previews without removing anything, naming who is being withdrawn', async () => {
     const { handlers, del } = claimSetup();
-    const out = JSON.parse((await handlers.get('signupgenius_release_slot')!(REL)).content[0].text);
-    expect(out.submitted).toBe(false);
-    expect(out.note).toMatch(/DRY RUN/);
-    expect(out.withdrawing).toEqual({ name: 'Chris Hall', spots: 1 });
+    const out = parseText(await handlers.get('signupgenius_release_slot')!(REL));
+    expect(out.status).toBe('confirmation-required');
+    expect(typeof out.confirmToken).toBe('string');
+    expect(out.preview.withdrawing).toEqual({ name: 'Chris Hall', spots: 1 });
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('ignores a model-supplied confirm:true on the first call (SEC-1)', async () => {
+    const { handlers, del } = claimSetup();
+    const out = parseText(
+      await handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true }, TOKEN_CTX),
+    );
+    expect(out.status).toBe('confirmation-required');
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('withdraws on the token round-trip (SEC-1)', async () => {
+    const { handlers, del } = claimSetup({ participantPages: [[MINE], [MINE], []] });
+    const out = parseText(await confirmViaToken(handlers.get('signupgenius_release_slot')!, REL));
+    expect(del).toHaveBeenCalledTimes(1);
+    expect(del).toHaveBeenCalledWith(62393618, 2000004, 4262737);
+    expect(out.submitted).toBe(true);
+  });
+
+  it('rejects a token replayed against a different entry (SEC-1)', async () => {
+    const OTHER_MINE = { ...MINE, itemmemberid: 2000009 };
+    const { handlers, del } = claimSetup({ participantPages: [[MINE, OTHER_MINE]] });
+    const h = handlers.get('signupgenius_release_slot')!;
+    const phase1 = parseText(await h(REL, TOKEN_CTX));
+    const out = parseText(
+      await h({ ...REL, itemMemberId: 2000009, confirmToken: phase1.confirmToken }, TOKEN_CTX),
+    );
+    expect(out.error).toBe('TOKEN_INVALID');
     expect(del).not.toHaveBeenCalled();
   });
 
@@ -429,7 +550,7 @@ describe('signupgenius_release_slot', () => {
         [{ firstname: 'Someone', lastname: 'Else', myqty: 1, itemmemberid: 2000004, memberid: 987654 }],
       ],
     });
-    await expect(handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true })).rejects.toThrow(
+    await expect(handlers.get('signupgenius_release_slot')!(REL, ACCEPT_CTX)).rejects.toThrow(
       /belongs to member 987654, not the signed-in member \(4262737\)/,
     );
     expect(del).not.toHaveBeenCalled();
@@ -456,7 +577,7 @@ describe('signupgenius_release_slot', () => {
   it('still rejects an explicitly mismatched memberId before any lookup', async () => {
     const { handlers, del } = claimSetup();
     await expect(
-      handlers.get('signupgenius_release_slot')!({ ...REL, memberId: 999999, confirm: true }),
+      handlers.get('signupgenius_release_slot')!({ ...REL, memberId: 999999 }, ACCEPT_CTX),
     ).rejects.toThrow(/not the signed-in member/);
     expect(del).not.toHaveBeenCalled();
   });
@@ -471,14 +592,14 @@ describe('signupgenius_release_slot', () => {
 
   it('accepts a profile that reports memberid instead of id', async () => {
     const { handlers } = claimSetup({ profile: { data: { memberid: 4262737 } } });
-    const out = JSON.parse((await handlers.get('signupgenius_release_slot')!(REL)).content[0].text);
-    expect(out.memberId).toBe(4262737);
+    const out = parseText(await handlers.get('signupgenius_release_slot')!(REL));
+    expect(out.preview.memberId).toBe(4262737);
   });
 
   it('removes and verifies the entry disappeared', async () => {
     const { handlers, del } = claimSetup({ participantPages: [[MINE], []] });
     const out = JSON.parse(
-      (await handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true })).content[0].text,
+      (await handlers.get('signupgenius_release_slot')!(REL, ACCEPT_CTX)).content[0].text,
     );
     expect(del).toHaveBeenCalledWith(62393618, 2000004, 4262737);
     expect(out.submitted).toBe(true);
@@ -488,7 +609,7 @@ describe('signupgenius_release_slot', () => {
   it('reports a still-listed entry without claiming nothing was removed', async () => {
     const { handlers } = claimSetup({ participantPages: [[MINE], [MINE]] });
     const err = await handlers
-      .get('signupgenius_release_slot')!({ ...REL, confirm: true })
+      .get('signupgenius_release_slot')!(REL, ACCEPT_CTX)
       .catch((e: Error) => e);
     expect(err.message).toMatch(/still listed on the slot/);
     // The delete reported success and the read-back may be stale, so the
@@ -499,7 +620,7 @@ describe('signupgenius_release_slot', () => {
   it('reports an unverifiable removal without failing it', async () => {
     const { handlers, del } = claimSetup({ participantsThrowAfter: 1 });
     const out = JSON.parse(
-      (await handlers.get('signupgenius_release_slot')!({ ...REL, confirm: true })).content[0].text,
+      (await handlers.get('signupgenius_release_slot')!(REL, ACCEPT_CTX)).content[0].text,
     );
     expect(del).toHaveBeenCalled();
     expect(out.submitted).toBe(true);

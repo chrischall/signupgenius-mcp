@@ -1,7 +1,15 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/server';
 import { SignUpGeniusClient } from '../../src/client.js';
-import { keyAccount, sessionAccount } from './_setup.js';
+import {
+  keyAccount,
+  sessionAccount,
+  ACCEPT_CTX,
+  TOKEN_CTX,
+  confirmViaToken,
+  parseText,
+  type Handler,
+} from './_setup.js';
 import {
   buildRsvpPayload,
   describeResponse,
@@ -164,9 +172,10 @@ function makeClient(account = sessionAccount, signedUpFor: unknown = []) {
 
 function attachTool(client: SignUpGeniusClient) {
   const server = new McpServer({ name: 'test', version: '0.0.0' });
-  const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+  const handlers = new Map<string, Handler>();
   vi.spyOn(server, 'registerTool').mockImplementation((name: string, _c: unknown, cb: unknown) => {
-    handlers.set(name, cb as (args: Record<string, unknown>) => Promise<unknown>);
+    // Default to a no-elicitation caller, the common hosted case.
+    handlers.set(name, (args, ctx = TOKEN_CTX) => (cb as Handler)(args, ctx));
     return undefined as never;
   });
   registerRsvpTool(server, client);
@@ -180,7 +189,7 @@ describe('signupgenius_rsvp tool', () => {
     expect(handlers.get('signupgenius_rsvp')).toBeUndefined();
   });
 
-  it('previews WITHOUT writing when confirm is absent', async () => {
+  it('previews WITHOUT writing on the first call, returning a confirmToken', async () => {
     // Parity with claim_slot/release_slot: a real RSVP under the user's name
     // must never reach the organizer on the first call.
     const { client, requestSpy, preSpy } = makeClient();
@@ -195,9 +204,12 @@ describe('signupgenius_rsvp tool', () => {
       email: 'chris@example.com',
     })) as { content: Array<{ text: string }> };
 
-    const out = JSON.parse(result.content[0].text);
-    expect(out.submitted).toBe(false);
-    expect(out.note).toMatch(/DRY RUN/);
+    const res = JSON.parse(result.content[0].text);
+    expect(res.status).toBe('confirmation-required');
+    expect(typeof res.confirmToken).toBe('string');
+    const out = res.preview;
+    // The preview names the sheet by title, not only by id.
+    expect(out.title).toBe('Myers Park Bands Spring Banquet');
     expect(out).toMatchObject({ response: 'yes', adults: 4, children: 0 });
     expect(out.respondingAs).toBe('Chris Hall <chris@example.com>');
     expect(out.duplicateCheck).toMatch(/no existing response/);
@@ -214,14 +226,55 @@ describe('signupgenius_rsvp tool', () => {
     }));
   });
 
-  it('treats confirm:false as a preview too', async () => {
-    const { client, preSpy } = makeClient();
+  it('ignores a model-supplied confirm:true on the first call — nothing is sent (SEC-1)', async () => {
+    // The old gate trusted `confirm: true`, so an over-eager or injected model
+    // could RSVP in the user's name in one shot without any preview.
+    const { client, requestSpy, preSpy } = makeClient();
     const handlers = attachTool(client);
-    const result = (await handlers.get('signupgenius_rsvp')!({
-      url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: false,
-    })) as { content: Array<{ text: string }> };
-    expect(JSON.parse(result.content[0].text).submitted).toBe(false);
+    const out = parseText(
+      await handlers.get('signupgenius_rsvp')!(
+        { url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true },
+        TOKEN_CTX,
+      ),
+    );
+    expect(out.status).toBe('confirmation-required');
     expect(preSpy).not.toHaveBeenCalled();
+    expect(requestSpy).not.toHaveBeenCalledWith('', expect.objectContaining({
+      legacyAction: 's.processSignUpFormHandler',
+    }));
+  });
+
+  it('submits on the token round-trip (SEC-1)', async () => {
+    const { client, requestSpy, preSpy } = makeClient();
+    const handlers = attachTool(client);
+    const out = parseText(
+      await confirmViaToken(handlers.get('signupgenius_rsvp')!, {
+        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
+      }),
+    );
+    expect(out.submitted).toBe(true);
+    expect(preSpy).toHaveBeenCalledTimes(1);
+    expect(
+      requestSpy.mock.calls.filter(
+        ([, o]) => (o as { legacyAction?: string } | undefined)?.legacyAction === 's.processSignUpFormHandler',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('rejects a token replayed against a different response (SEC-1)', async () => {
+    const { client, requestSpy, preSpy } = makeClient();
+    const handlers = attachTool(client);
+    const h = handlers.get('signupgenius_rsvp')!;
+    const base = { url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co' };
+    const phase1 = parseText(await h(base, TOKEN_CTX));
+    const out = parseText(
+      await h({ ...base, response: 'yes', adults: 6, confirmToken: phase1.confirmToken }, TOKEN_CTX),
+    );
+    expect(out.error).toBe('DRAFT_CHANGED');
+    expect(preSpy).not.toHaveBeenCalled();
+    expect(requestSpy).not.toHaveBeenCalledWith('', expect.objectContaining({
+      legacyAction: 's.processSignUpFormHandler',
+    }));
   });
 
   it('declares explicit write annotations', () => {
@@ -250,8 +303,7 @@ describe('signupgenius_rsvp tool', () => {
       firstname: 'Chris',
       lastname: 'Hall',
       email: 'chris@example.com',
-      confirm: true,
-    })) as { content: Array<{ text: string }> };
+    }, ACCEPT_CTX)) as { content: Array<{ text: string }> };
 
     expect(preSpy).toHaveBeenCalledWith(SLUG);
     expect(requestSpy).toHaveBeenNthCalledWith(1, '', {
@@ -331,8 +383,8 @@ describe('signupgenius_rsvp tool', () => {
     const handlers = attachTool(client);
     await expect(
       handlers.get('signupgenius_rsvp')!({
-        url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
-      }),
+        url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co',
+      }, ACCEPT_CTX),
     ).rejects.toThrow(/Sign up failed|RSVP submit failed/i);
   });
 
@@ -356,8 +408,8 @@ describe('signupgenius_rsvp tool', () => {
     const handlers = attachTool(client);
     const err = (await handlers
       .get('signupgenius_rsvp')!({
-        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
-      })
+        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
+      }, ACCEPT_CTX)
       .catch((e: Error) => e)) as Error;
     expect(err.message).toMatch(/RSVP submit failed: HTTP 502/);
     expect(err.message).toMatch(/may still have been recorded/);
@@ -371,11 +423,11 @@ describe('signupgenius_rsvp tool', () => {
       { signupid: 63774883, rsvpid: 555, rsvpvalue: 'y', rsvpcount: 2, rsvpchildcount: 1 },
     ]);
     const handlers = attachTool(client);
-    for (const confirm of [undefined, true]) {
+    for (const ctx of [TOKEN_CTX, ACCEPT_CTX]) {
       await expect(
         handlers.get('signupgenius_rsvp')!({
-          url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm,
-        }),
+          url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co',
+        }, ctx),
       ).rejects.toThrow(/already responded.*rsvpid 555/is);
     }
     expect(requestSpy).not.toHaveBeenCalledWith('', expect.objectContaining({
@@ -393,7 +445,7 @@ describe('signupgenius_rsvp tool', () => {
     const result = (await handlers.get('signupgenius_rsvp')!({
       url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
     })) as { content: Array<{ text: string }> };
-    expect(JSON.parse(result.content[0].text).duplicateCheck).toMatch(/no existing response/);
+    expect(JSON.parse(result.content[0].text).preview.duplicateCheck).toMatch(/no existing response/);
   });
 
   it('proceeds but says the duplicate check was skipped when signedupfor is unreadable', async () => {
@@ -402,7 +454,7 @@ describe('signupgenius_rsvp tool', () => {
     const result = (await handlers.get('signupgenius_rsvp')!({
       url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
     })) as { content: Array<{ text: string }> };
-    expect(JSON.parse(result.content[0].text).duplicateCheck).toMatch(/could not check/);
+    expect(JSON.parse(result.content[0].text).preview.duplicateCheck).toMatch(/could not check/);
   });
 
   it('tells the caller NOT to resend when the failed submit actually landed (#234)', async () => {
@@ -423,8 +475,8 @@ describe('signupgenius_rsvp tool', () => {
     const handlers = attachTool(client);
     await expect(
       handlers.get('signupgenius_rsvp')!({
-        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
-      }),
+        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
+      }, ACCEPT_CTX),
     ).rejects.toThrow(/IS now recorded.*do NOT resend/is);
   });
 
@@ -440,8 +492,8 @@ describe('signupgenius_rsvp tool', () => {
     vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
     const handlers = attachTool(client);
     const err = (await handlers.get('signupgenius_rsvp')!({
-      url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
-    }).catch((e: Error) => e)) as Error;
+      url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
+    }, ACCEPT_CTX).catch((e: Error) => e)) as Error;
     expect(err.message).toMatch(/RSVP submit failed: HTTP 400 bad field/);
     expect(err.message).toMatch(/no response from you is listed/);
   });
@@ -458,8 +510,8 @@ describe('signupgenius_rsvp tool', () => {
     const handlers = attachTool(client);
     await expect(
       handlers.get('signupgenius_rsvp')!({
-        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
-      }),
+        url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
+      }, ACCEPT_CTX),
     ).rejects.toThrow(/RSVP submit failed: plain-string failure/);
   });
 
@@ -476,8 +528,8 @@ describe('signupgenius_rsvp tool', () => {
     await expect(
       handlers.get('signupgenius_rsvp')!({
         url: URL_FULL, response: 'maybe',
-        firstname: 'A', lastname: 'B', email: 'x@y.co', confirm: true,
-      }),
+        firstname: 'A', lastname: 'B', email: 'x@y.co',
+      }, ACCEPT_CTX),
     ).rejects.toThrow(/unknown/i);
   });
 
