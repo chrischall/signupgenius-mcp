@@ -6,7 +6,7 @@
 
 MCP server for [SignUpGenius](https://www.signupgenius.com). 15 read tools and 4 write across profile, groups, sign-ups, reports, public sign-up metadata, slot listings, RSVPs, and slot claim/release.
 
-Reading a sign-up needs **no credentials at all**: `signupgenius_get_public_signup` (title, description, organizer, required questions) and `signupgenius_list_slots` (dates, times, locations, capacity, who has signed up and how many spots each entry takes) work on any public sheet, including ones you did not create. The two slot writes — `signupgenius_claim_slot` and `signupgenius_release_slot` — need a signed-in session and both require an explicit `confirm: true`, returning a dry-run preview otherwise.
+Reading a sign-up needs **no credentials at all**: `signupgenius_get_public_signup` (title, description, organizer, required questions) and `signupgenius_list_slots` (dates, times, locations, capacity, who has signed up and how many spots each entry takes) work on any public sheet, including ones you did not create. The two slot writes — `signupgenius_claim_slot` and `signupgenius_release_slot` — need a signed-in session and, like `signupgenius_rsvp`, never write on the first call: a client that supports MCP elicitation gets a confirmation prompt; otherwise the first call returns a preview and a single-use `confirmToken` bound to that exact write, and only a repeat call with the same arguments plus the token submits. `MCP_CONFIRM_MODE` (`ask-user` default, `auto`, `refuse`) tunes this.
 
 Three auth modes (tried in this priority order — first match wins):
 1. **Pro key mode.** Uses the documented Pro API key. Required only for the slot REPORT tools (filled/available/all-participants). Pro subscription needed.

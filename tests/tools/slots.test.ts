@@ -346,6 +346,22 @@ describe('signupgenius_list_slots tool', () => {
     expect(calls[0]).toBe('https://api.signupgenius.com/v3/signups/62393618/slots');
   });
 
+  it("never returns other participants' stable member_id (PRIV-1)", async () => {
+    // member_id is a stable SignUpGenius account id that correlates the same
+    // person across every public sheet they touch. The tool output only needs
+    // what the sheet itself shows, plus item_member_id for release_slot (which
+    // re-derives ownership server-side from /member/profile).
+    const { fetcher } = routed();
+    const out = JSON.parse((await setup(fetcher)({ url: '62393618' })).content[0].text);
+    const all = out.slots.flatMap((s: { participants?: unknown[] }) => s.participants ?? []);
+    expect(all.length).toBeGreaterThan(0);
+    for (const p of all) {
+      expect(p).not.toHaveProperty('member_id');
+      expect(p).toHaveProperty('item_member_id');
+    }
+    expect(JSON.stringify(out)).not.toMatch(/member_id":1000/);
+  });
+
   it('skips the participant fan-out when asked', async () => {
     const { fetcher, calls } = routed();
     const out = JSON.parse(

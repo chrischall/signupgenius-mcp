@@ -110,15 +110,15 @@
     },
     {
       "name": "signupgenius_rsvp",
-      "description": "RSVP yes/no/maybe to a headcount sign-up (write, confirm first)"
+      "description": "RSVP yes/no/maybe to a headcount sign-up (write; confirmation prompt or confirmToken)"
     },
     {
       "name": "signupgenius_claim_slot",
-      "description": "Claim a slot on a slot-based sign-up (write, requires confirm:true)"
+      "description": "Claim a slot on a slot-based sign-up (write; confirmation prompt or confirmToken)"
     },
     {
       "name": "signupgenius_release_slot",
-      "description": "Withdraw a slot the user signed up for (write, requires confirm:true)"
+      "description": "Withdraw a slot the user signed up for (write; confirmation prompt or confirmToken)"
     },
     {
       "name": "signupgenius_healthcheck",

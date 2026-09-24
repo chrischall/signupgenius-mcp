@@ -1,7 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { confirmTokenParam } from '@chrischall/mcp-utils';
 import type { SignUpGeniusClient } from '../client.js';
-import { textContent } from './_shared.js';
+import { confirmWrite, textContent } from './_shared.js';
 import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
 
 /**
@@ -12,7 +13,8 @@ import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
  * Angular wizard in `/dist/js/main/signupform.min.js`:
  *
  *   (Order at run time: getSignupInfo, the `/signups/signedupfor` duplicate
- *   check, then — only on confirm:true — PreProcessSignup and the submit,
+ *   check, the confirmation gate, then — only once confirmed — PreProcessSignup
+ *   and the submit,
  *   the same sequence claim_slot uses.)
  *
  *   1. POST `/index.cfm?go=s.PreProcessSignup&URLID=<urlid>` (form-encoded).
@@ -148,13 +150,7 @@ const inputSchema = z.object({
   firstname: z.string().min(1),
   lastname: z.string().min(1),
   email: z.string().email(),
-  confirm: z
-    .boolean()
-    .optional()
-    .describe(
-      'Must be true to actually submit. Omit (or false) to get a dry-run preview of the ' +
-        'sign-up, response, head counts and identity — nothing is sent to the organizer.',
-    ),
+  confirmToken: confirmTokenParam,
 });
 
 /** Translate input + sign-up metadata into the wire payload. Pure / testable. */
@@ -278,11 +274,12 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
     {
       description:
         'RSVP to a SignUpGenius sign-up (the Yes/No/Maybe-style sheets, ' +
-        'including invitations from family/friends). Two-step by design: call ' +
-        'WITHOUT `confirm` first to get a preview of the response, head counts and ' +
-        'identity, show it to the user, then call again with confirm:true. WRITES ' +
-        'DATA — never call with confirm:true unless the user has explicitly approved ' +
-        'this specific response. Refuses when the signed-in member already has a ' +
+        'including invitations from family/friends). WRITES DATA the organizer sees, so it ' +
+        'asks the user to confirm first: a confirmation prompt where the client supports ' +
+        'one; otherwise the first call sends nothing and returns the preview (sheet, ' +
+        'response, head counts, identity) and a confirmToken, and only a repeat call with ' +
+        'the same arguments plus that token submits — show the preview to the user and get ' +
+        'their approval first (MCP_CONFIRM_MODE). Refuses when the signed-in member already has a ' +
         'response on the sheet (it can only ADD a response, so a second one would ' +
         'double-count) — change an existing answer in the SignUpGenius web UI. Slot-based ' +
         'sign-ups (e.g. "claim the 3pm slot") are NOT handled here — use ' +
@@ -290,7 +287,7 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       inputSchema: inputSchema,
     },
-    async (raw) => {
+    async (raw, ctx) => {
       const args = inputSchema.parse(raw);
       const parts = parseSignUpUrl(args.url);
 
@@ -349,15 +346,21 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
             ? 'no existing response from the signed-in member on this sheet'
             : `could not check for an existing response (${mine.reason})`,
       };
-      if (args.confirm !== true) {
-        return textContent({
-          ...preview,
-          submitted: false,
-          note:
-            'DRY RUN — nothing was sent. Show this to the user and call again with ' +
-            'confirm:true to submit the RSVP.',
-        });
-      }
+      // SEC-1: bound to this tool, this sheet and the exact wire payload
+      // (response letter, head counts, comment, identity).
+      const gate = await confirmWrite(ctx, client, {
+        tool: 'signupgenius_rsvp',
+        action: 'signupgenius.rsvp',
+        message:
+          `Review and confirm this RSVP to "${info.title}". The organizer will see your ` +
+          'response and head count.',
+        confirmationLabel: 'Send this RSVP now.',
+        confirmToken: args.confirmToken,
+        target: String(parts.signupid),
+        payload,
+        preview,
+      });
+      if (gate) return gate;
 
       // PreProcessSignup marks the sign-up as "being processed by member X" on
       // the ColdFusion session — part of the write, so only when confirmed.
