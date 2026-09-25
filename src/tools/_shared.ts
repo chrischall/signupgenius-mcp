@@ -25,7 +25,12 @@ export interface ConfirmWriteOptions {
   target: string;
   /** The exact wire payload; its hash is bound into the token. */
   payload: unknown;
-  /** The complete preview shown to the user (never hashed). */
+  /**
+   * The complete preview shown to the user. It rides along in `subject()`
+   * because mcp-utils returns it on phase 1, but only `payload` is hashed into
+   * the token — so volatile display fields (a duplicate-check reason, a live
+   * availability count) can change between the two calls without a refusal.
+   */
   preview: Record<string, unknown>;
 }
 

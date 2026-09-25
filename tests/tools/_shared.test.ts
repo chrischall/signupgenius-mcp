@@ -44,6 +44,31 @@ describe('confirmWrite', () => {
     ).toBeUndefined();
   });
 
+  it('binds only the payload, not the display preview', async () => {
+    // The preview carries volatile, display-only fields (a duplicate-check
+    // reason, a live "available" count). A change there between the two calls
+    // must not refuse the token; a change to the wire payload must.
+    const client = new SignUpGeniusClient(sessionAccount);
+    const phase1 = parseText(await confirmWrite(TOKEN_CTX as never, client, opts));
+    expect(
+      await confirmWrite(TOKEN_CTX as never, client, {
+        ...opts,
+        preview: { what: 'Sheet A', duplicateCheck: 'could not check (transient)' },
+        confirmToken: phase1.confirmToken,
+      }),
+    ).toBeUndefined();
+
+    const again = parseText(await confirmWrite(TOKEN_CTX as never, client, opts));
+    const changed = parseText(
+      await confirmWrite(TOKEN_CTX as never, client, {
+        ...opts,
+        payload: { a: 2 },
+        confirmToken: again.confirmToken,
+      }),
+    );
+    expect(changed.error).toBe('DRAFT_CHANGED');
+  });
+
   it('still gates when no account is configured', async () => {
     const unconfigured = new SignUpGeniusClient(null, { configError: new Error('no env') });
     const phase1 = parseText(await confirmWrite(TOKEN_CTX as never, unconfigured, opts));
