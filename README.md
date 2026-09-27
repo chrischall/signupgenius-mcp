@@ -54,7 +54,9 @@ Find the user key in SignUpGenius under **Pro Tools → API Management**.
 
 ### fetchproxy fallback (no env vars)
 
-Install the ContextMint Bridge browser extension from its [releases page](https://github.com/nullnet-app/contextmint-bridge/releases) (Chrome: download the chrome zip, unzip it and load it unpacked at `chrome://extensions` with Developer mode on; Safari: it ships inside the ContextMint app), sign into [signupgenius.com](https://www.signupgenius.com), and remove the env block from your MCP config. The MCP reads `accessToken` / `cfid` / `cftoken` cookies once at startup and uses them like a session-mode login. No password copy-paste required.
+Install the ContextMint Bridge browser extension from its [releases page](https://github.com/nullnet-app/contextmint-bridge/releases) (Chrome: download the chrome zip, unzip it and load it unpacked at `chrome://extensions` with Developer mode on. Safari isn't available yet — it will ship inside the ContextMint app, which has no public download — so use Chrome for now), sign into [signupgenius.com](https://www.signupgenius.com), and remove the env block from your MCP config. The MCP reads `accessToken` / `cfid` / `cftoken` cookies once at startup and uses them like a session-mode login. No password copy-paste required.
+
+ContextMint Bridge is the fetchproxy browser extension under its new name, from the same maintainer — fetchproxy's own [README](https://github.com/chrischall/fetchproxy#extension) points to it. Its source is public at [nullnet-app/contextmint-bridge](https://github.com/nullnet-app/contextmint-bridge): build it yourself, or check a release zip against the `.sha256` file published beside it (`shasum -a 256 -c contextmint-bridge-chrome-<version>.zip.sha256`).
 
 The slot REPORT tools still require Pro key mode — `SIGNUPGENIUS_USER_KEY` is the only path that hits the documented v2/k Pro API. They are also **owner-scoped**, so they only answer for sheets the key holder created; for availability and participants on anyone's sheet use `signupgenius_list_slots`, which needs no auth.
 

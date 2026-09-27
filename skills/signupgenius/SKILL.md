@@ -16,7 +16,7 @@ Three auth modes, tried in priority order — first match wins. **You only need 
 
 ### Mode 1 — fetchproxy fallback (zero env vars, recommended)
 
-Install the ContextMint Bridge browser extension once ([releases](https://github.com/nullnet-app/contextmint-bridge/releases): Chrome loads the chrome zip unpacked; Safari ships inside the ContextMint app), sign into [signupgenius.com](https://www.signupgenius.com), and add to `.mcp.json` (project) or `~/.claude/mcp.json` (global):
+Install the ContextMint Bridge browser extension once ([releases](https://github.com/nullnet-app/contextmint-bridge/releases): Chrome loads the chrome zip unpacked; Safari isn't available yet, so use Chrome for now — it's the fetchproxy extension renamed, source at https://github.com/nullnet-app/contextmint-bridge, verify a zip with its `.sha256` file), sign into [signupgenius.com](https://www.signupgenius.com), and add to `.mcp.json` (project) or `~/.claude/mcp.json` (global):
 
 ```json
 {
