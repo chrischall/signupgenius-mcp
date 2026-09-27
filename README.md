@@ -11,7 +11,7 @@ Reading a sign-up needs **no credentials at all**: `signupgenius_get_public_sign
 Three auth modes (tried in this priority order — first match wins):
 1. **Pro key mode.** Uses the documented Pro API key. Required only for the slot REPORT tools (filled/available/all-participants). Pro subscription needed.
 2. **Session mode.** Logs in with your normal email/password to call the same web API the signupgenius.com dashboard uses. **Free accounts work.** No SSO/2FA.
-3. **fetchproxy fallback (no env vars needed).** When no env vars are set, the server reads `accessToken` / `cfid` / `cftoken` cookies once at startup from your already-signed-in `signupgenius.com` tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) browser extension. After that one read, all SignUpGenius API calls go directly from Node — the extension is **not** in the request hot path. Install the extension once, sign into SignUpGenius, and the MCP just works.
+3. **fetchproxy fallback (no env vars needed).** When no env vars are set, the server reads `accessToken` / `cfid` / `cftoken` cookies once at startup from your already-signed-in `signupgenius.com` tab via the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases) browser extension (built on fetchproxy). After that one read, all SignUpGenius API calls go directly from Node — the extension is **not** in the request hot path. Install the extension once (see [fetchproxy fallback](#fetchproxy-fallback-no-env-vars) below), sign into SignUpGenius, and the MCP just works.
 
 Set `SIGNUPGENIUS_DISABLE_FETCHPROXY=1` to opt out of the fallback (turns missing credentials into a hard error — useful in headless CI).
 
@@ -54,7 +54,7 @@ Find the user key in SignUpGenius under **Pro Tools → API Management**.
 
 ### fetchproxy fallback (no env vars)
 
-Install the [fetchproxy extension](https://github.com/chrischall/fetchproxy) (Chrome Web Store / Safari `.dmg`), sign into [signupgenius.com](https://www.signupgenius.com), and remove the env block from your MCP config. The MCP reads `accessToken` / `cfid` / `cftoken` cookies once at startup and uses them like a session-mode login. No password copy-paste required.
+Install the ContextMint Bridge browser extension from its [releases page](https://github.com/nullnet-app/contextmint-bridge/releases) (Chrome: download the chrome zip, unzip it and load it unpacked at `chrome://extensions` with Developer mode on; Safari: it ships inside the ContextMint app), sign into [signupgenius.com](https://www.signupgenius.com), and remove the env block from your MCP config. The MCP reads `accessToken` / `cfid` / `cftoken` cookies once at startup and uses them like a session-mode login. No password copy-paste required.
 
 The slot REPORT tools still require Pro key mode — `SIGNUPGENIUS_USER_KEY` is the only path that hits the documented v2/k Pro API. They are also **owner-scoped**, so they only answer for sheets the key holder created; for availability and participants on anyone's sheet use `signupgenius_list_slots`, which needs no auth.
 
