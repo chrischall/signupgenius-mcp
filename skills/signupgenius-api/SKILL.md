@@ -120,5 +120,5 @@ that one.
   here since this skill is the email/password session path.
 - **fetchproxy** (lifting these same cookies out of a signed-in browser tab)
   is the MCP's fallback for when no env credentials are set. This skill
-  always logs in directly, so fetchproxy/the Transporter extension is never
+  always logs in directly, so fetchproxy/the ContextMint Bridge extension is never
   needed.

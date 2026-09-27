@@ -158,7 +158,7 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
   throw new Error(
     'Missing SignUpGenius auth config. Set SIGNUPGENIUS_USER_KEY (Pro API), ' +
       'or SIGNUPGENIUS_EMAIL + SIGNUPGENIUS_PASSWORD (session mode, free accounts), ' +
-      'or install the fetchproxy extension and sign into signupgenius.com ' +
+      'or install the ContextMint Bridge browser extension and sign into signupgenius.com ' +
       '(unset SIGNUPGENIUS_DISABLE_FETCHPROXY if it is set).',
   );
 }
@@ -354,7 +354,7 @@ function createBrowserRefresher(): () => Promise<BrowserSession> {
         // server restart is required (it was, before the lazy refactor).
         throw new Error(
           'accessToken cookie missing on www.signupgenius.com. ' +
-            'Sign into signupgenius.com in your browser (with the fetchproxy extension installed) ' +
+            'Sign into signupgenius.com in your browser (with the ContextMint Bridge extension installed) ' +
             'and retry.',
         );
       }
@@ -371,11 +371,13 @@ function createBrowserRefresher(): () => Promise<BrowserSession> {
 
       return { accessToken, cookieHeader };
     } catch (e) {
-      // Typed 0.8.0 error: SW retry already exhausted — surface `.hint` verbatim.
+      // Typed bridge-down error: SW retry already exhausted — surface `.hint` verbatim.
+      // Every other kind (capability_unavailable included) falls through and has
+      // the library's message appended to the fallback text below.
       if (classifyBridgeError(e) === 'bridge_down') {
         const downErr = e as FetchproxyBridgeDownError;
         throw new Error(
-          `SignUpGenius auth: fetchproxy bridge is down (extension service worker unreachable after retry). ${downErr.hint}`,
+          `SignUpGenius auth: ContextMint Bridge is down (extension service worker unreachable after retry). ${downErr.hint}`,
         );
       }
       const msg = e instanceof Error ? e.message : String(e);
