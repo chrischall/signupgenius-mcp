@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.5](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.4...v2.1.5) (2026-09-27)
+
+
+### Bug Fixes
+
+* **deps:** move to [@fetchproxy](https://github.com/fetchproxy) 3.4 for ContextMint Bridge errors, capability subsets and managed pins ([#207](https://github.com/chrischall/signupgenius-mcp/issues/207)) ([bd658b6](https://github.com/chrischall/signupgenius-mcp/commit/bd658b6db9c73f32aba4c29448a5581b03a7a925))
+* **deps:** move to @chrischall/mcp-utils 2.8 and [@fetchproxy](https://github.com/fetchproxy) 3.4.1 for clearer browser-bridge errors ([#209](https://github.com/chrischall/signupgenius-mcp/issues/209)) ([49f40bd](https://github.com/chrischall/signupgenius-mcp/commit/49f40bd6d7470da08cfe293d2b4c290a28584253))
+
 ## [2.1.4](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.3...v2.1.4) (2026-09-25)
 
 
