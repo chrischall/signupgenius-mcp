@@ -1,4 +1,10 @@
-import { McpToolError, ModeMismatchError, UnreachableError } from '@chrischall/mcp-utils';
+import {
+  EdgeBlockedError,
+  McpToolError,
+  ModeMismatchError,
+  UnreachableError,
+  detectEdgeBlock,
+} from '@chrischall/mcp-utils';
 import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import type { Account } from './config.js';
@@ -448,6 +454,14 @@ async function parseEnvelope<T>(
   const parsed = raw !== null ? normalize(raw) : null;
   const msg = parsed?.message.join('; ');
 
+  // A CDN/WAF refusal page never reached SignUpGenius, so it says nothing about
+  // the key or the session. Checked before the 403 → AuthError mapping, which
+  // would send the user to re-check a credential nobody looked at
+  // (chrischall/mcp-host#1015). EdgeBlockedError keeps the real status.
+  if (!res.ok) {
+    const edge = detectEdgeBlock({ body: text, headers: res.headers, status: res.status });
+    if (edge) throw new EdgeBlockedError(res.status, edge.vendor, { service: 'SignUpGenius', path: context });
+  }
   if (res.status === 401 || res.status === 403) throw new AuthError(res.status, msg);
   if (res.status === 404) throw new Error(`SignUpGenius 404 ${context}`);
   if (res.status >= 500) throw new UnreachableError('SignUpGenius', res.status);
