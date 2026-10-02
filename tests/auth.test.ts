@@ -329,6 +329,26 @@ describe('resolveAuth', () => {
       fetchSpy.mockRestore();
     });
 
+    it('reads exp from a payload that uses the base64url alphabet (- and _)', async () => {
+      // '??>>' encodes to '-'/'_' in base64url — a decoder on the plain base64
+      // alphabet would mangle it and mistake a stale token for an opaque one.
+      const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      const payload = b64({ n: '??>>??>>', exp: Math.floor(Date.now() / 1000) - 60 });
+      expect(payload).toMatch(/[-_]/);
+      const stale = `${b64({ alg: 'HS256' })}.${payload}.sig`;
+      bootstrapMock.mockResolvedValue(okCookies({ accessToken: stale, refreshToken: 'rt' }));
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({ success: true, data: { response: { token: makeJwt(1800) } } }),
+          { status: 200 },
+        ) as unknown as Response,
+      );
+      const { refresh } = await resolveAuth();
+      await refresh!();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      fetchSpy.mockRestore();
+    });
+
     it('treats an undecodable/opaque token as usable rather than guessing', async () => {
       bootstrapMock.mockResolvedValue(okCookies({ accessToken: 'not-a-jwt' }));
       const fetchSpy = vi.spyOn(globalThis, 'fetch');

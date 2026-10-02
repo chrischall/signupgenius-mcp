@@ -56,7 +56,7 @@
 
 import { createSessionLifter } from '@fetchproxy/bootstrap';
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@fetchproxy/server';
-import { parseBoolEnv } from '@chrischall/mcp-utils';
+import { decodeJwtExp, parseBoolEnv } from '@chrischall/mcp-utils';
 import { loadAccount, type Account, type SessionAccount } from './config.js';
 import pkg from '../package.json' with { type: 'json' };
 
@@ -187,20 +187,18 @@ const V3_BASE_URL = 'https://api.signupgenius.com/v3';
 const RENEW_SKEW_SECONDS = 120;
 
 /**
- * Read a JWT's `exp` claim. Returns null for anything that isn't a decodable
- * JWT with a numeric `exp` — callers then treat the token as opaque and use it
- * as-is rather than guessing.
+ * Read a JWT's `exp` claim via the shared `decodeJwtExp`. Returns null for
+ * anything that isn't a decodable JWT with a numeric `exp` — callers then treat
+ * the token as opaque and use it as-is rather than guessing. (Not
+ * `validateJwtExpiry`: that fails CLOSED on an opaque token, and here an
+ * opaque token is usable.)
  *
  * NEVER log the decoded payload: SignUpGenius's JWT carries name, email,
- * phone, member id and IP.
+ * phone, member id and IP. `decodeJwtExp` reads only `exp`.
  */
 function jwtExpiry(token: string): number | null {
-  const parts = token.split('.');
-  if (parts.length < 2) return null;
   try {
-    const json = Buffer.from(parts[1]!.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString();
-    const exp = (JSON.parse(json) as { exp?: unknown }).exp;
-    return typeof exp === 'number' ? exp : null;
+    return decodeJwtExp(token);
   } catch {
     return null;
   }
