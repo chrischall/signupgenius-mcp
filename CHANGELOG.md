@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.6](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.5...v2.1.6) (2026-10-03)
+
+
+### Bug Fixes
+
+* **deps:** adopt @chrischall/mcp-utils 2.12.0 decodeJwtExp for token renewal ([#217](https://github.com/chrischall/signupgenius-mcp/issues/217)) ([f710b9c](https://github.com/chrischall/signupgenius-mcp/commit/f710b9c82616fc7945eb4a2876756e218f8189cb))
+* **deps:** bump @chrischall/mcp-utils to 2.13.0 ([#218](https://github.com/chrischall/signupgenius-mcp/issues/218)) ([11e97f5](https://github.com/chrischall/signupgenius-mcp/commit/11e97f50e24365c955333df2c042bb27df94347b))
+* **deps:** bump dotenv from 18.0.2 to 18.0.4 in the production-dependencies group ([#212](https://github.com/chrischall/signupgenius-mcp/issues/212)) ([c0c0f83](https://github.com/chrischall/signupgenius-mcp/commit/c0c0f837c7357e6b8e7c886e41c237dc43d8fb2e))
+* keep credentials and report edge_blocked on CDN/WAF blocks (mcp-utils 2.10.0) ([#215](https://github.com/chrischall/signupgenius-mcp/issues/215)) ([0a843d6](https://github.com/chrischall/signupgenius-mcp/commit/0a843d6bc7d0824c33b1aab79b9237a6a1bed469))
+* keep write approvals valid across a hosted restart (mcp-utils 2.11.0) ([#216](https://github.com/chrischall/signupgenius-mcp/issues/216)) ([3fbf1e3](https://github.com/chrischall/signupgenius-mcp/commit/3fbf1e3df322b86d841b80e5ed0d01eefb175220))
+* report CDN/WAF blocks as edge_blocked, not a rejected credential (mcp-utils 2.9.0) ([#214](https://github.com/chrischall/signupgenius-mcp/issues/214)) ([c0804e4](https://github.com/chrischall/signupgenius-mcp/commit/c0804e469a94892ff0d3d7027fb09f7377175e95))
+
 ## [2.1.5](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.4...v2.1.5) (2026-09-27)
 
 
