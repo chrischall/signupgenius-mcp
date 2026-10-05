@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.7](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.6...v2.1.7) (2026-10-05)
+
+
+### Bug Fixes
+
+* **deps:** require @chrischall/mcp-utils 2.14.0 and MCP SDK 2.3.0 ([#219](https://github.com/chrischall/signupgenius-mcp/issues/219)) ([4e008fe](https://github.com/chrischall/signupgenius-mcp/commit/4e008fe661d12ceff41b07d1591c12a59ef58fde))
+
 ## [2.1.6](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.5...v2.1.6) (2026-10-03)
 
 
