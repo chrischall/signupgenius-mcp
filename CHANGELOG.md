@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.8](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.7...v2.1.8) (2026-10-07)
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group with 3 updates ([#223](https://github.com/chrischall/signupgenius-mcp/issues/223)) ([c2cf861](https://github.com/chrischall/signupgenius-mcp/commit/c2cf8618d1fba25ea9ac06861589df7bccf1acf8))
+* **deps:** pick up elicitation opt-out and fetchproxy bridge approval/relay fixes ([#225](https://github.com/chrischall/signupgenius-mcp/issues/225)) ([f1e5550](https://github.com/chrischall/signupgenius-mcp/commit/f1e55500a89a8353ee76485a324500ec07d5bef1))
+
+
+### Documentation
+
+* document MCP_CONFIRM_ELICITATION ([#226](https://github.com/chrischall/signupgenius-mcp/issues/226)) ([d45c830](https://github.com/chrischall/signupgenius-mcp/commit/d45c830a9c98550c01edb877b26246674cd3108d))
+
 ## [2.1.7](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.6...v2.1.7) (2026-10-05)
 
 
