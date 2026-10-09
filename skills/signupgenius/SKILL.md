@@ -71,7 +71,7 @@ Modes can be combined; Pro key wins where it applies, session/fetchproxy handles
 - **`signupgenius_list_groups`** — Every group you own or belong to.
 - **`signupgenius_list_group_members`** — Members of one of your groups.
 - **`signupgenius_get_group_member`** — One member's full record.
-- **`signupgenius_add_group_member`** *(write)* — Add a person to one of your groups.
+- **`signupgenius_add_group_member`** *(write)* — Add a person to one of your groups (they may start receiving the group's invitations). Same confirmation as the other writes: a client that can show a prompt gets one (unless the server sets `MCP_CONFIRM_ELICITATION=off`); otherwise the first call adds nothing and returns a preview plus a `confirmToken` — show it to the user, then repeat the call with the same arguments plus `confirmToken`.
 
 ### Sign-ups — created by you
 
@@ -118,5 +118,5 @@ Outside key mode these fail fast with a `KeyModeRequiredError` naming the tool, 
 - **Reports require Pro.** `signupgenius_report_*` only work with `SIGNUPGENIUS_USER_KEY` — session/fetchproxy users get a clear error pointing at the key.
 - **SSO accounts not supported.** Session mode is direct email/password only — no Google/Apple/Facebook/Microsoft SSO, no 2FA. Use fetchproxy mode instead if your account uses SSO.
 - **Session listings collapse.** In session mode the v3 `signups/created` endpoint returns active + expired in one paginated call — the three `list_created_*` tools all hit the same endpoint and filter client-side. Pro key mode has separate endpoints and exposes the real distinction.
-- **Write surface is small.** Only `signupgenius_add_group_member` and `signupgenius_rsvp` mutate; everything else is read-only.
+- **Write surface is small.** Only `signupgenius_add_group_member`, `signupgenius_rsvp`, `signupgenius_claim_slot` and `signupgenius_release_slot` mutate, all behind the confirmation gate; everything else is read-only.
 - **ToS caveat.** SignUpGenius's terms generally prohibit scripted/automated access. Personal-account, personal-scale use is the intended audience; running this against accounts you don't own or at scale is your problem.
