@@ -300,7 +300,8 @@ describe('signupgenius_rsvp tool', () => {
     registerRsvpTool(server, client);
     expect(configs.get('signupgenius_rsvp')!.annotations).toMatchObject({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
       idempotentHint: false,
     });
   });

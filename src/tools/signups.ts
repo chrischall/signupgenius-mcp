@@ -76,7 +76,10 @@ export function registerSignUpTools(server: McpServer, client: SignUpGeniusClien
   for (const l of LISTINGS) {
     server.registerTool(
       l.name,
-      { description: session ? l.desc.session : l.desc.key, annotations: { readOnlyHint: true } },
+      {
+        description: session ? l.desc.session : l.desc.key,
+        annotations: { readOnlyHint: true, openWorldHint: true },
+      },
       async () => textContent(await client.request(session ? l.session : l.key)),
     );
   }
@@ -91,7 +94,7 @@ export function registerSignUpTools(server: McpServer, client: SignUpGeniusClien
           'Session mode only. Returns the same sign-up listing the SignUpGenius wizard sees ' +
           '(via /SUGboxAPI.cfm?go=t.getMySignups). Use when you want fuller data than ' +
           'signupgenius_list_created_* provides.',
-        annotations: { readOnlyHint: true },
+        annotations: { readOnlyHint: true, openWorldHint: true },
       },
       async () => textContent(await client.request('', { legacyAction: 't.getMySignups' })),
     );

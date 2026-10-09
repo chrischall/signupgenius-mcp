@@ -30,7 +30,7 @@ export function registerReportTools(server: McpServer, client: SignUpGeniusClien
           'supported for reports — AND only covers sheets the key-holder created. ' +
           'For slot dates, times and availability on ANY sign-up (including sheets the user ' +
           'did not create) prefer signupgenius_list_slots, which needs no auth.',
-        annotations: { readOnlyHint: true },
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: reportArgs,
       },
       async (raw) => {

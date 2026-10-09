@@ -169,7 +169,7 @@ describe('signupgenius_add_group_member', () => {
     expect(requestSpy).not.toHaveBeenCalled();
   });
 
-  it('declares explicit, non-destructive write annotations', () => {
+  it('declares explicit, destructive write annotations (reaches a third party, no remove-member inverse)', () => {
     const client = new SignUpGeniusClient(sessionAccount);
     const server = new McpServer({ name: 'test', version: '0.0.0' });
     const configs = new Map<string, { annotations?: Record<string, unknown> }>();
@@ -180,7 +180,8 @@ describe('signupgenius_add_group_member', () => {
     registerGroupTools(server, client);
     expect(configs.get('signupgenius_add_group_member')!.annotations).toMatchObject({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
       idempotentHint: false,
     });
   });
