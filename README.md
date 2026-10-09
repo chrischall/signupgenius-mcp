@@ -93,6 +93,7 @@ Tests: vitest, 100% line/branch/function coverage. End-to-end tests against the 
 
 - The Pro v2/k API authenticates via a `user_key` query param. The session API uses a JWT Bearer + session cookie. The client picks the right one based on which env vars you set.
 - All response envelopes are normalized to `{ data, message, success }` (lowercase) regardless of which surface served the request — the legacy SUGboxAPI dispatcher's uppercase envelope is rewritten internally.
+- `signupgenius_healthcheck` reports the credential in use as `credential.source`, one of `api key`, `email/password session`, `fetchproxy session`, or `<mode> (auth not configured)` (e.g. `session (auth not configured)`) when auth setup was deferred. **Changed in 2.1.9:** an email/password login used to report `fetchproxy session`, and a deferred config used to report `fetchproxy session` or `api key`. Update anything that matches on the old strings.
 - For testing the Pro v2/k surface without an account, SignUpGenius publishes a frozen demo key: `V0FzMkxZcmVOZlVnclZMVEl6dGhWQT09`.
 
 Developed and maintained by AI (Claude). Use at your own discretion.
