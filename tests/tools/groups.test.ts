@@ -8,6 +8,7 @@ import {
   ACCEPT_CTX,
   DECLINE_CTX,
   TOKEN_CTX,
+  acceptedCtx,
 } from './_setup.js';
 import { SignUpGeniusClient } from '../../src/client.js';
 import { registerGroupTools } from '../../src/tools/groups.js';
@@ -119,6 +120,33 @@ describe('signupgenius_add_group_member', () => {
       ACCEPT_CTX,
     );
     expect(created(requestSpy)).toHaveLength(1);
+  });
+
+  it('refuses an acceptance that echoes no requestState, without writing', async () => {
+    const { handlers, requestSpy } = setupTools(registerGroupTools, sessionAccount);
+    // A raw accepted round (no echoed state) — a host that drops requestState.
+    const unbound = { mcpReq: { ...ACCEPT_CTX.mcpReq } };
+    const res = (await handlers.get('signupgenius_add_group_member')!(
+      { groupId: 1, emailaddress: 'a@b.com' },
+      unbound,
+    )) as unknown as { isError?: boolean; content: Array<{ text: string }> };
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/no requestState/);
+    expect(created(requestSpy)).toHaveLength(0);
+  });
+
+  it('re-asks when the acceptance was minted for different arguments', async () => {
+    const { handlers, requestSpy, client } = setupTools(registerGroupTools, sessionAccount);
+    const otherPerson = await acceptedCtx(client, 'signupgenius_add_group_member', {
+      groupId: 1,
+      emailaddress: 'someone-else@b.com',
+    });
+    const res = (await handlers.get('signupgenius_add_group_member')!(
+      { groupId: 1, emailaddress: 'a@b.com' },
+      otherPerson,
+    )) as unknown as { requestState?: unknown };
+    expect(typeof res.requestState).toBe('string');
+    expect(created(requestSpy)).toHaveLength(0);
   });
 
   it('does not write when the prompt was declined', async () => {

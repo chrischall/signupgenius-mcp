@@ -98,6 +98,7 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
           "start receiving the group's sign-up invitations.",
         confirmationLabel: 'Add this person to the group now.',
         confirmToken: args.confirmToken,
+        args,
         target: String(args.groupId),
         payload: body,
         preview: { groupId: args.groupId, ...body },

@@ -21,6 +21,12 @@ export interface ConfirmWriteOptions {
   confirmationLabel: string;
   /** Phase-2 token from the tool input, undefined on phase 1. */
   confirmToken?: string;
+  /**
+   * The tool's validated arguments. mcp-utils drops `confirmToken` before
+   * hashing and binds the rest into both the token and the elicitation
+   * acceptance, so an approval never carries over to different arguments.
+   */
+  args: Record<string, unknown>;
   /** What the write targets (sign-up + slot / entry). */
   target: string;
   /** The exact wire payload; its hash is bound into the token. */
@@ -65,7 +71,8 @@ export function confirmWrite(
       confirmationLabel: opts.confirmationLabel,
       details: opts.preview,
       tool: opts.tool,
-      ...('name' in who ? { account: who.name } : {}),
+      account: 'name' in who ? who.name : undefined,
+      args: opts.args,
       confirmToken: opts.confirmToken,
       instruction: ASK_USER_INSTRUCTION,
       subject: () => ({ target: opts.target, payload: opts.payload, preview: opts.preview }),

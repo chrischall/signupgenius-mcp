@@ -8,6 +8,7 @@ import {
   TOKEN_CTX,
   confirmViaToken,
   parseText,
+  wrapHandler,
   type Handler,
 } from './_setup.js';
 import {
@@ -185,8 +186,7 @@ function attachTool(client: SignUpGeniusClient) {
   const server = new McpServer({ name: 'test', version: '0.0.0' });
   const handlers = new Map<string, Handler>();
   vi.spyOn(server, 'registerTool').mockImplementation((name: string, _c: unknown, cb: unknown) => {
-    // Default to a no-elicitation caller, the common hosted case.
-    handlers.set(name, (args, ctx = TOKEN_CTX) => (cb as Handler)(args, ctx));
+    handlers.set(name, wrapHandler(name, cb, client));
     return undefined as never;
   });
   registerRsvpTool(server, client);

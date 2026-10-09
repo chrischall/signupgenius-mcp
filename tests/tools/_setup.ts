@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/server';
 import { SignUpGeniusClient } from '../../src/client.js';
+import { confirmWrite } from '../../src/tools/_shared.js';
 import type { KeyAccount, SessionAccount } from '../../src/config.js';
 
 export type Handler = (
@@ -20,13 +21,66 @@ export const TOKEN_CTX = { mcpReq: { envelope: { [CAPS]: {} } } };
 /** A caller that CAN be prompted, on its first round (no answer yet). */
 export const ELICIT_CTX = { mcpReq: { envelope: { [CAPS]: { elicitation: { form: {} } } } } };
 
-/** A caller that was prompted and accepted — the write may proceed in one call. */
+/**
+ * A caller that was prompted and accepted — the write may proceed in one call.
+ * Since mcp-utils 3.0 an acceptance only counts alongside the HMAC-protected
+ * `requestState` the prompt carried (bound to the action, account and
+ * arguments), so the handlers built here ({@link wrapHandler}) swap this
+ * marker for an accepted ctx that echoes a state minted for exactly that call,
+ * as a conforming client would. Passed straight to a raw tool callback it
+ * carries no state and is refused.
+ */
 export const ACCEPT_CTX = {
   mcpReq: {
     envelope: { [CAPS]: { elicitation: { form: {} } } },
     inputResponses: { confirmation: { action: 'accept', content: { confirmed: true } } },
   },
 };
+
+/** Each gated tool's confirmation action id — the state binds it. */
+const ACTIONS: Record<string, string> = {
+  signupgenius_add_group_member: 'signupgenius.group.add_member',
+  signupgenius_claim_slot: 'signupgenius.claim_slot',
+  signupgenius_release_slot: 'signupgenius.release_slot',
+  signupgenius_rsvp: 'signupgenius.rsvp',
+};
+
+/**
+ * The accepted round of an elicitation for `tool` called with `args` by
+ * `client`'s account: the state comes from a real prompt round through the
+ * same gate, so it binds exactly what the tool's own gate will check.
+ */
+export async function acceptedCtx(
+  client: SignUpGeniusClient,
+  tool: string,
+  args: Record<string, unknown>,
+) {
+  const ask = (await confirmWrite(ELICIT_CTX as never, client, {
+    tool,
+    action: ACTIONS[tool] ?? tool,
+    message: 'Confirm.',
+    confirmationLabel: 'Confirm.',
+    target: 'test',
+    payload: {},
+    preview: {},
+    args,
+  })) as unknown as { requestState?: unknown };
+  if (typeof ask.requestState !== 'string') {
+    throw new Error(`prompt round returned no requestState: ${JSON.stringify(ask)}`);
+  }
+  const state = ask.requestState;
+  return { mcpReq: { ...ACCEPT_CTX.mcpReq, requestState: () => state } };
+}
+
+/**
+ * A registered tool callback as tests call it: the ctx defaults to a
+ * no-elicitation caller (the common hosted case), and {@link ACCEPT_CTX}
+ * becomes a properly state-bound accepted round.
+ */
+export function wrapHandler(name: string, cb: unknown, client: SignUpGeniusClient): Handler {
+  return async (args, ctx = TOKEN_CTX) =>
+    (cb as Handler)(args, ctx === ACCEPT_CTX ? await acceptedCtx(client, name, args) : ctx);
+}
 
 /** A caller that was prompted and declined. */
 export const DECLINE_CTX = {
@@ -88,8 +142,7 @@ export function setupTools(
   const server = new McpServer({ name: 'test', version: '0.0.0' });
   const handlers = new Map<string, Handler>();
   vi.spyOn(server, 'registerTool').mockImplementation((name: string, _c: unknown, cb: unknown) => {
-    // Default to a no-elicitation caller, the common hosted case.
-    handlers.set(name, (args, ctx = TOKEN_CTX) => (cb as Handler)(args, ctx));
+    handlers.set(name, wrapHandler(name, cb, client));
     return undefined as never;
   });
   register(server, client);
