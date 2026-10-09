@@ -58,6 +58,7 @@ import { createSessionLifter } from '@fetchproxy/bootstrap';
 import { classifyBridgeError, FetchproxyBridgeDownError } from '@fetchproxy/server';
 import { decodeJwtExp, parseBoolEnv } from '@chrischall/mcp-utils';
 import { loadAccount, type Account, type SessionAccount } from './config.js';
+import { timedFetch } from './http.js';
 import pkg from '../package.json' with { type: 'json' };
 
 /** A JWT + cookie header lifted out of the signed-in browser. */
@@ -241,7 +242,7 @@ async function renewIfStale(
         'the session) and retry.',
     );
   }
-  const res = await fetch(`${V3_BASE_URL}/auth/refresh`, {
+  const res = await timedFetch(`${V3_BASE_URL}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ refreshToken, token: accessToken }),

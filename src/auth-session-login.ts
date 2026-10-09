@@ -22,6 +22,7 @@
  */
 
 import { sessionLoginFlow } from '@chrischall/mcp-utils';
+import { timedFetch } from './http.js';
 
 export interface SessionLoginInput {
   loginUrl?: string; // override for testing
@@ -46,7 +47,7 @@ export async function sessionLogin(input: SessionLoginInput): Promise<SessionLog
   // POST's redirect target so we can give the clearer bad-credentials message.
   let postLocation = '';
   const locationRecordingFetch: typeof fetch = async (url, init) => {
-    const res = await fetch(url, init);
+    const res = await timedFetch(url, init);
     if (init?.method === 'POST') {
       postLocation = res.headers.get('location') ?? '';
     }

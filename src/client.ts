@@ -8,6 +8,7 @@ import {
 import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import type { Account } from './config.js';
+import { timedFetch } from './http.js';
 
 // Re-exported so tools/tests keep importing the error types from the client
 // module (the shared classes live in @chrischall/mcp-utils since 0.10.x).
@@ -290,7 +291,7 @@ export class SignUpGeniusClient {
     const acct = this.requireAccount() as Extract<Account, { mode: 'session' }>;
     const url = `${acct.legacyBaseUrl}/index.cfm?go=s.PreProcessSignup&URLID=${encodeURIComponent(urlid)}`;
     const res = await this.session!.withSession((session) =>
-      fetch(url, {
+      timedFetch(url, {
         method: 'POST',
         redirect: 'manual',
         headers: {
@@ -338,7 +339,7 @@ export class SignUpGeniusClient {
       `${acct.legacyBaseUrl}/index.cfm?go=s.DeletePerson&id=${encodeURIComponent(String(signupId))}` +
       `&imid=${encodeURIComponent(String(itemMemberId))}&mid=${encodeURIComponent(String(memberId))}`;
     const res = await this.session!.withSession((session) =>
-      fetch(url, {
+      timedFetch(url, {
         method: 'GET',
         redirect: 'manual',
         headers: { ...sessionAuthHeaders(session), Accept: 'text/html' },
@@ -422,7 +423,7 @@ export class SignUpGeniusClient {
     if (!this.session) {
       // key mode: stateless, user_key rides in the query string.
       return mark(
-        await fetch(url, {
+        await timedFetch(url, {
           method: init.method,
           headers: { Accept: 'application/json', ...(init.headers ?? {}) },
           body: init.body,
@@ -431,7 +432,7 @@ export class SignUpGeniusClient {
     }
     return this.session.withSession(async (session) =>
       mark(
-        await fetch(url, {
+        await timedFetch(url, {
           method: init.method,
           headers: {
             Accept: 'application/json',

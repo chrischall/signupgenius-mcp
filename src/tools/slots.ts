@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { textContent } from './_shared.js';
 import { parseSignUpUrl } from './public-signup.js';
 import { legacyPost, type Fetcher } from './sug-legacy.js';
+import { timedFetch } from '../http.js';
 
 /**
  * Slot listing — the primary participant question ("what's still open?").
@@ -319,7 +320,7 @@ export async function fetchAllParticipants(
 
 export function registerSlotTools(
   server: McpServer,
-  fetcher: Fetcher = (url, init) => globalThis.fetch(url, init),
+  fetcher: Fetcher = timedFetch,
 ): void {
   server.registerTool(
     'signupgenius_list_slots',

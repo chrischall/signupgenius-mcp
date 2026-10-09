@@ -88,6 +88,8 @@ src/
                           #   requireMode(), envelope normalizers. Error types: local AuthError (extends McpToolError,
                           #   SUG key/session guidance as hint); UnreachableError + ModeMismatchError re-exported
                           #   from @chrischall/mcp-utils.
+  http.ts                 # timedFetch(): every upstream fetch goes through it — 30s timeout (REQUEST_TIMEOUT_MS)
+                          #   combined with the MCP request's cancellation. Never call bare fetch().
   tools/
     _shared.ts            # textContent() = textResult from @chrischall/mcp-utils (the standard MCP text block)
     user.ts               # registerUserTools — signupgenius_get_profile

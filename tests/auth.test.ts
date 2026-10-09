@@ -301,6 +301,8 @@ describe('resolveAuth', () => {
       const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
       expect(url).toBe('https://api.signupgenius.com/v3/auth/refresh');
       expect(init.method).toBe('POST');
+      // fleet-audit#701: every upstream call carries a timeout signal.
+      expect(init.signal).toBeInstanceOf(AbortSignal);
       // BOTH fields are required — the live endpoint 400s on refreshToken alone
       // with "token should not be null or undefined".
       expect(JSON.parse(init.body as string)).toEqual({

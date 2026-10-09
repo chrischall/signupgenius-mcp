@@ -28,7 +28,7 @@ export interface FetchInitLike {
 }
 
 /**
- * Injectable fetch. Defaults to `globalThis.fetch`; tests pass a stub.
+ * Injectable fetch. Defaults to `timedFetch` (bounded + cancellable); tests pass a stub.
  * `init` is optional so existing GET-only callers stay source-compatible.
  */
 export type Fetcher = (url: string, init?: FetchInitLike) => Promise<FetchResponseLike>;

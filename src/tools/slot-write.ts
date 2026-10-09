@@ -5,6 +5,7 @@ import type { SignUpGeniusClient } from '../client.js';
 import { confirmWrite, textContent } from './_shared.js';
 import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
 import type { Fetcher } from './sug-legacy.js';
+import { timedFetch } from '../http.js';
 import { fetchAllParticipants, type Participant } from './slots.js';
 
 /**
@@ -271,7 +272,7 @@ export function registerSlotWriteTools(
   server: McpServer,
   client: SignUpGeniusClient,
   /** Public (unauthenticated) fetch used for the ownership + read-back checks. */
-  fetcher: Fetcher = (url, init) => globalThis.fetch(url, init),
+  fetcher: Fetcher = timedFetch,
 ): void {
   // Both writes ride the browser session (JWT + ColdFusion cookies). The Pro
   // v2/k key API has no equivalent, so registering them in key mode would

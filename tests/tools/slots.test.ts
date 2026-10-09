@@ -515,6 +515,8 @@ describe('signupgenius_list_slots tool', () => {
     } as never);
     const out = JSON.parse((await setup()({ url: '5' })).content[0].text);
     expect(spy).toHaveBeenCalled();
+    // fleet-audit#701: the default fetcher bounds every call with a timeout.
+    expect((spy.mock.calls[0]![1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
     expect(out.slotCount).toBe(0);
   });
 });
