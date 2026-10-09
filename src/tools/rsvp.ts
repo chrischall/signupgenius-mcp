@@ -387,6 +387,7 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
           (who.note ? ` ${who.note}` : ''),
         confirmationLabel: 'Send this RSVP now.',
         confirmToken: args.confirmToken,
+        args,
         target: String(parts.signupid),
         payload,
         preview,

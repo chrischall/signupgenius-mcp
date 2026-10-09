@@ -25,6 +25,7 @@ describe('confirmWrite', () => {
     target: 't1',
     payload: { a: 1 },
     preview: { what: 'Sheet A' },
+    args: { slot: 1 },
   };
 
   it('binds the token to the signed-in account', async () => {
@@ -67,6 +68,29 @@ describe('confirmWrite', () => {
       }),
     );
     expect(changed.error).toBe('DRAFT_CHANGED');
+  });
+
+  it('binds the token to the tool arguments (minus confirmToken)', async () => {
+    const client = new SignUpGeniusClient(sessionAccount);
+    const phase1 = parseText(await confirmWrite(TOKEN_CTX as never, client, opts));
+    // Different arguments with the same payload are refused…
+    const crossed = parseText(
+      await confirmWrite(TOKEN_CTX as never, client, {
+        ...opts,
+        args: { slot: 2 },
+        confirmToken: phase1.confirmToken,
+      }),
+    );
+    expect(crossed.error).toBe('DRAFT_CHANGED');
+    // …while the original arguments, now carrying the token, are accepted.
+    const again = parseText(await confirmWrite(TOKEN_CTX as never, client, opts));
+    expect(
+      await confirmWrite(TOKEN_CTX as never, client, {
+        ...opts,
+        args: { ...opts.args, confirmToken: again.confirmToken },
+        confirmToken: again.confirmToken,
+      }),
+    ).toBeUndefined();
   });
 
   it('still gates when no account is configured', async () => {
