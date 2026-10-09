@@ -775,3 +775,21 @@ describe('isSessionExpired — legacy-only body sniffing', () => {
     expect(fakeLogin).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('SignUpGeniusClient.authSource (fleet-audit#705)', () => {
+  it('names key mode', () => {
+    expect(new SignUpGeniusClient(keyAccount).authSource).toBe('api key');
+  });
+
+  it('names an email/password session apart from a fetchproxy one', () => {
+    expect(new SignUpGeniusClient(sessionAccount).authSource).toBe('email/password session');
+    const lifted = new SignUpGeniusClient(sessionAccount, {
+      refreshSession: async () => ({ accessToken: 't', cookieHeader: 'c' }),
+    });
+    expect(lifted.authSource).toBe('fetchproxy session');
+  });
+
+  it('is null while config is deferred', () => {
+    expect(new SignUpGeniusClient(null, { configError: new Error('x') }).authSource).toBeNull();
+  });
+});

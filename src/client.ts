@@ -109,6 +109,8 @@ export class SignUpGeniusClient {
   private sessionLoginFn: SessionLoginFn;
   /** Present only in session/fetchproxy mode; owns login + expiry-replay. */
   private session: CookieSessionManager<SugSession> | null = null;
+  /** True when sessions are lifted from the browser (fetchproxy), not form-login. */
+  private readonly browserBacked: boolean;
 
   /**
    * Accepts either a fully-resolved Account or a deferred error from
@@ -134,6 +136,7 @@ export class SignUpGeniusClient {
     this.account = account;
     this.configError = opts.configError ?? null;
     this.sessionLoginFn = opts.sessionLogin ?? defaultSessionLogin;
+    this.browserBacked = opts.refreshSession !== undefined;
     if (account?.mode === 'session') {
       this.session = this.makeSessionManager(account, opts.refreshSession);
     }
@@ -196,6 +199,18 @@ export class SignUpGeniusClient {
    */
   get mode(): Account['mode'] {
     return this.account?.mode ?? 'session';
+  }
+
+  /**
+   * Which credential this client actually runs on. `mode` alone cannot say:
+   * session mode covers BOTH an email/password form login and a fetchproxy
+   * browser lift, and they are fixed in different places (the env vars vs.
+   * signing into signupgenius.com). Null while auth config is deferred.
+   */
+  get authSource(): 'api key' | 'email/password session' | 'fetchproxy session' | null {
+    if (!this.account) return null;
+    if (this.account.mode === 'key') return 'api key';
+    return this.browserBacked ? 'fetchproxy session' : 'email/password session';
   }
 
   async request<T>(path: string, opts: RequestOpts = {}): Promise<ApiResponse<T>> {

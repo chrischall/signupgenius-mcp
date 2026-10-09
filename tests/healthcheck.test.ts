@@ -10,8 +10,14 @@ interface Result {
   hint: string;
 }
 
-function clientWith(mode: 'session' | 'key', probe: (path: string) => Promise<unknown>) {
-  return { mode, request: probe } as unknown as SignUpGeniusClient;
+type AuthSource = SignUpGeniusClient['authSource'];
+
+function clientWith(
+  mode: 'session' | 'key',
+  probe: (path: string) => Promise<unknown>,
+  authSource: AuthSource = mode === 'key' ? 'api key' : 'fetchproxy session',
+) {
+  return { mode, request: probe, authSource } as unknown as SignUpGeniusClient;
 }
 
 async function call(client: SignUpGeniusClient) {
@@ -65,5 +71,42 @@ describe('signupgenius_healthcheck', () => {
       }),
     );
     expect(upstream.error?.kind).toBe('http');
+  });
+
+  // fleet-audit#705: session mode covers BOTH email/password form login and the
+  // fetchproxy browser lift. A bad password is not fixed by signing into the
+  // browser, so the source and the rejection hint must tell them apart.
+  it('reports an email/password session as such, with a password hint', async () => {
+    const ok = await call(clientWith('session', async () => ({}), 'email/password session'));
+    expect(ok.credential.source).toBe('email/password session');
+
+    const rejected = await call(
+      clientWith(
+        'session',
+        async () => {
+          throw Object.assign(new Error('Unauthorized'), { status: 401 });
+        },
+        'email/password session',
+      ),
+    );
+    expect(rejected.error?.kind).toBe('credential_rejected');
+    expect(rejected.hint).toMatch(/SIGNUPGENIUS_EMAIL/);
+    expect(rejected.hint).toMatch(/SIGNUPGENIUS_PASSWORD/);
+    expect(rejected.hint).not.toMatch(/browser/i);
+  });
+
+  it('gives a fetchproxy session a browser sign-in hint', async () => {
+    const rejected = await call(
+      clientWith('session', async () => {
+        throw Object.assign(new Error('Unauthorized'), { status: 401 });
+      }),
+    );
+    expect(rejected.hint).toMatch(/sign into signupgenius\.com in the browser/i);
+    expect(rejected.hint).not.toMatch(/SIGNUPGENIUS_PASSWORD/);
+  });
+
+  it('falls back to a generic source when auth config is deferred', async () => {
+    const r = await call(clientWith('session', async () => ({}), null));
+    expect(r.credential.source).toBe('session (auth not configured)');
   });
 });
