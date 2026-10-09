@@ -71,7 +71,7 @@ Modes can be combined; Pro key wins where it applies, session/fetchproxy handles
 - **`signupgenius_list_groups`** — Every group you own or belong to.
 - **`signupgenius_list_group_members`** — Members of one of your groups.
 - **`signupgenius_get_group_member`** — One member's full record.
-- **`signupgenius_add_group_member`** *(write)* — Add a person to one of your groups.
+- **`signupgenius_add_group_member`** *(write)* — Add a person to one of your groups (they may start receiving the group's invitations). Same confirmation as the other writes: a client that can show a prompt gets one (unless the server sets `MCP_CONFIRM_ELICITATION=off`); otherwise the first call adds nothing and returns a preview plus a `confirmToken` — show it to the user, then repeat the call with the same arguments plus `confirmToken`.
 
 ### Sign-ups — created by you
 
@@ -89,8 +89,8 @@ Modes can be combined; Pro key wins where it applies, session/fetchproxy handles
 
 - **`signupgenius_get_public_signup`** — Sheet metadata by URL or slug: title, description, organizer, category, timezone, and the custom questions a sign-up must answer. **No auth required.** Metadata only — it carries no slots.
 - **`signupgenius_list_slots`** — Every slot on ANY public sign-up: date, day of week, start/end time, title, location, capacity, filled vs available, and who has signed up (with the number of spots each entry consumes). **No auth required**, and it works on sheets the user did not create. Reach for this first for "what's still open" — the report tools below cannot answer it for someone else's sheet.
-- **`signupgenius_rsvp`** *(write)* — RSVP yes/no/maybe to a headcount (Yes/No/Maybe) sheet. Never writes on the first call: you get a confirmation prompt, or a preview plus a `confirmToken` — show the preview to the user and, only after they approve, repeat the call with the same arguments plus `confirmToken`. Not for slot-based sheets.
-- **`signupgenius_claim_slot`** *(write)* — Sign up for a slot on a slot-based sheet. The first call writes nothing and returns a preview of the sheet, slot and identity (plus a `confirmToken` when the client cannot show a prompt); show it to the user, then repeat the call with the same arguments plus `confirmToken`. Pass the sheet's required custom fields (read them from `signupgenius_get_public_signup`).
+- **`signupgenius_rsvp`** *(write)* — RSVP yes/no/maybe to a headcount (Yes/No/Maybe) sheet. Never writes on the first call: a client that can show a prompt gets one (unless the server sets `MCP_CONFIRM_ELICITATION=off`); otherwise you get a preview plus a `confirmToken` — show the preview to the user and, only after they approve, repeat the call with the same arguments plus `confirmToken`. Not for slot-based sheets.
+- **`signupgenius_claim_slot`** *(write)* — Sign up for a slot on a slot-based sheet. The first call writes nothing and returns a preview of the sheet, slot and identity (plus a `confirmToken` when the client cannot show a prompt, or when the server sets `MCP_CONFIRM_ELICITATION=off`); show it to the user, then repeat the call with the same arguments plus `confirmToken`. Pass the sheet's required custom fields (read them from `signupgenius_get_public_signup`).
 - **`signupgenius_release_slot`** *(write)* — Give up a slot the user signed up for. Same two-step confirmation as above. Takes `item_member_id` **and** `slotitemid` from the same `signupgenius_list_slots` row; it only ever withdraws the signed-in user's own entry and refuses anyone else's.
 
 ### Reports — slots for a sign-up (Pro key only, **owner-scoped**)
@@ -118,5 +118,5 @@ Outside key mode these fail fast with a `KeyModeRequiredError` naming the tool, 
 - **Reports require Pro.** `signupgenius_report_*` only work with `SIGNUPGENIUS_USER_KEY` — session/fetchproxy users get a clear error pointing at the key.
 - **SSO accounts not supported.** Session mode is direct email/password only — no Google/Apple/Facebook/Microsoft SSO, no 2FA. Use fetchproxy mode instead if your account uses SSO.
 - **Session listings collapse.** In session mode the v3 `signups/created` endpoint returns active + expired in one paginated call — the three `list_created_*` tools all hit the same endpoint and filter client-side. Pro key mode has separate endpoints and exposes the real distinction.
-- **Write surface is small.** Only `signupgenius_add_group_member` and `signupgenius_rsvp` mutate; everything else is read-only.
+- **Write surface is small.** Only `signupgenius_add_group_member`, `signupgenius_rsvp`, `signupgenius_claim_slot` and `signupgenius_release_slot` mutate, all behind the confirmation gate; everything else is read-only.
 - **ToS caveat.** SignUpGenius's terms generally prohibit scripted/automated access. Personal-account, personal-scale use is the intended audience; running this against accounts you don't own or at scale is your problem.

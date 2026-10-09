@@ -8,6 +8,7 @@ import {
 import { createSessionCache, reportCacheWriteFailure } from './session-cache.js';
 import { CookieSessionManager } from '@chrischall/mcp-utils/session';
 import type { Account } from './config.js';
+import { timedFetch } from './http.js';
 
 // Re-exported so tools/tests keep importing the error types from the client
 // module (the shared classes live in @chrischall/mcp-utils since 0.10.x).
@@ -86,12 +87,20 @@ async function isSessionExpired(res: Response): Promise<boolean> {
     const legacyText = await res.clone().text();
     if (LEGACY_LOGGED_OUT.test(legacyText)) return true;
   }
-  // Shape 2 stays gated to non-JSON responses, as before: the login-page
-  // markers are short enough that scanning JSON bodies for them could
-  // plausibly misfire on user-authored sign-up content.
+  // Shape 2 applies only where JSON was expected (authedFetch calls). The HTML
+  // navigations — DeletePerson, PreProcessSignup — answer with full pages whose
+  // chrome routinely links to `index.cfm?go=c.Login`, so sniffing them would
+  // read a SUCCESSFUL write as expiry and replay it (fleet-audit#1112); those
+  // callers detect a lapsed session by status / Location instead.
+  if (!jsonResponses.has(res)) return false;
+  // Gated to non-JSON responses: the login-page markers are short enough that
+  // scanning JSON bodies for them could misfire on user-authored sign-up
+  // content. The dispatcher does not set content-type dependably, so a body
+  // that parses as JSON is not the login page whatever its headers say.
   const ct = res.headers.get('content-type') ?? '';
   if (ct && !ct.includes('text/html')) return false;
   const text = await res.clone().text();
+  if (parseJsonBody<unknown>(text) !== null) return false;
   return /loginform|loginemail|go=c\.Login/i.test(text);
 }
 
@@ -103,12 +112,20 @@ async function isSessionExpired(res: Response): Promise<boolean> {
  */
 const legacyResponses = new WeakSet<Response>();
 
+/**
+ * Responses to calls that expected a JSON body (everything routed through
+ * `authedFetch`). Only these can carry the HTML-login-page expiry shape.
+ */
+const jsonResponses = new WeakSet<Response>();
+
 export class SignUpGeniusClient {
   private account: Account | null;
   private configError: Error | null;
   private sessionLoginFn: SessionLoginFn;
   /** Present only in session/fetchproxy mode; owns login + expiry-replay. */
   private session: CookieSessionManager<SugSession> | null = null;
+  /** True when sessions are lifted from the browser (fetchproxy), not form-login. */
+  private readonly browserBacked: boolean;
 
   /**
    * Accepts either a fully-resolved Account or a deferred error from
@@ -134,6 +151,7 @@ export class SignUpGeniusClient {
     this.account = account;
     this.configError = opts.configError ?? null;
     this.sessionLoginFn = opts.sessionLogin ?? defaultSessionLogin;
+    this.browserBacked = opts.refreshSession !== undefined;
     if (account?.mode === 'session') {
       this.session = this.makeSessionManager(account, opts.refreshSession);
     }
@@ -196,6 +214,18 @@ export class SignUpGeniusClient {
    */
   get mode(): Account['mode'] {
     return this.account?.mode ?? 'session';
+  }
+
+  /**
+   * Which credential this client actually runs on. `mode` alone cannot say:
+   * session mode covers BOTH an email/password form login and a fetchproxy
+   * browser lift, and they are fixed in different places (the env vars vs.
+   * signing into signupgenius.com). Null while auth config is deferred.
+   */
+  get authSource(): 'api key' | 'email/password session' | 'fetchproxy session' | null {
+    if (!this.account) return null;
+    if (this.account.mode === 'key') return 'api key';
+    return this.browserBacked ? 'fetchproxy session' : 'email/password session';
   }
 
   async request<T>(path: string, opts: RequestOpts = {}): Promise<ApiResponse<T>> {
@@ -261,7 +291,7 @@ export class SignUpGeniusClient {
     const acct = this.requireAccount() as Extract<Account, { mode: 'session' }>;
     const url = `${acct.legacyBaseUrl}/index.cfm?go=s.PreProcessSignup&URLID=${encodeURIComponent(urlid)}`;
     const res = await this.session!.withSession((session) =>
-      fetch(url, {
+      timedFetch(url, {
         method: 'POST',
         redirect: 'manual',
         headers: {
@@ -309,7 +339,7 @@ export class SignUpGeniusClient {
       `${acct.legacyBaseUrl}/index.cfm?go=s.DeletePerson&id=${encodeURIComponent(String(signupId))}` +
       `&imid=${encodeURIComponent(String(itemMemberId))}&mid=${encodeURIComponent(String(memberId))}`;
     const res = await this.session!.withSession((session) =>
-      fetch(url, {
+      timedFetch(url, {
         method: 'GET',
         redirect: 'manual',
         headers: { ...sessionAuthHeaders(session), Accept: 'text/html' },
@@ -324,8 +354,8 @@ export class SignUpGeniusClient {
     // A lapsed ColdFusion session does NOT 4xx here — the dispatcher answers a
     // 3xx to the login page, which `redirect: 'manual'` hands back verbatim and
     // a bare `status >= 400` check would read as success. `isSessionExpired`
-    // cannot rescue this either: it fires on a 401, or on a 200 whose BODY
-    // carries the login markers, and this is neither. Catch it by destination.
+    // cannot rescue this either: it fires on a 401 (and never sniffs this HTML
+    // navigation's body), and this is a 3xx. Catch it by destination.
     // (The two session clocks are independent — see the CLAUDE.md quirk — so a
     // valid JWT is no guarantee the CF session is still alive.)
     const location = res.headers.get('location') ?? '';
@@ -386,13 +416,14 @@ export class SignUpGeniusClient {
     opts: { legacy?: boolean } = {},
   ): Promise<Response> {
     const mark = (res: Response): Response => {
+      jsonResponses.add(res);
       if (opts.legacy) legacyResponses.add(res);
       return res;
     };
     if (!this.session) {
       // key mode: stateless, user_key rides in the query string.
       return mark(
-        await fetch(url, {
+        await timedFetch(url, {
           method: init.method,
           headers: { Accept: 'application/json', ...(init.headers ?? {}) },
           body: init.body,
@@ -401,7 +432,7 @@ export class SignUpGeniusClient {
     }
     return this.session.withSession(async (session) =>
       mark(
-        await fetch(url, {
+        await timedFetch(url, {
           method: init.method,
           headers: {
             Accept: 'application/json',

@@ -39,6 +39,8 @@ describe('sessionLogin', () => {
       // POST to c.Login
       expect(u).toContain('go=c.Login');
       expect(init?.method).toBe('POST');
+      // fleet-audit#701: the credential POST carries a timeout signal.
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
       const body = (init?.body as string) ?? '';
       expect(body).toContain('csrfToken=csrf-real');
       expect(body).toContain('loginemail=me%40x.com');

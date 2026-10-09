@@ -141,6 +141,8 @@ describe('registration gating', () => {
       }),
     ).rejects.toThrow(/No sign-up entry/);
     expect(spy).toHaveBeenCalled();
+    // fleet-audit#701: the default fetcher bounds every call with a timeout.
+    expect((spy.mock.calls[0]![1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
 
   it('registers both tools in session mode', () => {

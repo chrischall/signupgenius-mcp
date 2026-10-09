@@ -259,6 +259,8 @@ describe('signupgenius_get_public_signup tool', () => {
     registerPublicSignUpTool(server);
     return handlers.get('signupgenius_get_public_signup')!({ url: 'ABC-1' }).then(() => {
       expect(spy).toHaveBeenCalled();
+      // fleet-audit#701: the default fetcher bounds every call with a timeout.
+      expect((spy.mock.calls[0]![1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
     });
   });
 });

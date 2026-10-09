@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { textContent } from './_shared.js';
+import { timedFetch } from '../http.js';
 import {
   legacyPost,
   htmlToParagraphs,
@@ -264,7 +265,7 @@ function joinName(first?: string, last?: string): string {
 
 export function registerPublicSignUpTool(
   server: McpServer,
-  fetcher: Fetcher = (url, init) => globalThis.fetch(url, init),
+  fetcher: Fetcher = timedFetch,
 ): void {
   server.registerTool(
     'signupgenius_get_public_signup',

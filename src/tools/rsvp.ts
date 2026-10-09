@@ -399,10 +399,8 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
             'sheet, so a retry should not double-count.',
         );
       }
-      if (!result.success) {
-        const detail = result.message.length > 0 ? result.message.join('; ') : 'unknown';
-        throw new Error(`RSVP submit failed: ${detail}`);
-      }
+      // No `if (!result.success)` here: client.request() throws on a
+      // SUCCESS:false envelope, so that path lands in the catch above.
       return textContent({
         success: true,
         ...preview,
