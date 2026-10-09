@@ -367,17 +367,17 @@ describe('signupgenius_rsvp tool', () => {
     ).rejects.toThrow(/not an RSVP/i);
   });
 
-  it('surfaces a server-side failure as an error', async () => {
+  it('surfaces a server-side SUCCESS:false (thrown by the client) with RSVP context', async () => {
+    // The real client never RESOLVES with success:false — parseEnvelope throws
+    // `SignUpGenius error: <MESSAGE>` instead — so mock the shape it really
+    // produces and check the tool rewraps it with RSVP context.
     const client = new SignUpGeniusClient(sessionAccount);
-    vi.spyOn(client, 'request').mockImplementation(async (_p, opts) => {
+    vi.spyOn(client, 'request').mockImplementation(async (p, opts) => {
+      if (p === '/signups/signedupfor') return { data: [], message: [], success: true } as never;
       if (opts?.legacyAction === 's.getSignupInfo') {
         return { data: RSVP_INFO, message: [], success: true } as never;
       }
-      return {
-        data: {},
-        message: ['Sign up failed.'],
-        success: false,
-      } as never;
+      throw new Error('SignUpGenius error: Sign up failed.');
     });
     vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
     const handlers = attachTool(client);
@@ -385,7 +385,7 @@ describe('signupgenius_rsvp tool', () => {
       handlers.get('signupgenius_rsvp')!({
         url: URL_FULL, response: 'no', firstname: 'A', lastname: 'B', email: 'x@y.co',
       }, ACCEPT_CTX),
-    ).rejects.toThrow(/Sign up failed|RSVP submit failed/i);
+    ).rejects.toThrow(/RSVP submit failed: SignUpGenius error: Sign up failed\./);
   });
 
   it('warns against a blind resend when the submit throws and the re-read cannot tell (#234)', async () => {
@@ -513,24 +513,6 @@ describe('signupgenius_rsvp tool', () => {
         url: URL_FULL, response: 'yes', firstname: 'A', lastname: 'B', email: 'x@y.co',
       }, ACCEPT_CTX),
     ).rejects.toThrow(/RSVP submit failed: plain-string failure/);
-  });
-
-  it('falls back to "unknown" when the server failure has no detail', async () => {
-    const client = new SignUpGeniusClient(sessionAccount);
-    vi.spyOn(client, 'request').mockImplementation(async (_p, opts) => {
-      if (opts?.legacyAction === 's.getSignupInfo') {
-        return { data: RSVP_INFO, message: [], success: true } as never;
-      }
-      return { data: {}, message: [], success: false } as never;
-    });
-    vi.spyOn(client, 'preProcessSignUp').mockResolvedValue(undefined);
-    const handlers = attachTool(client);
-    await expect(
-      handlers.get('signupgenius_rsvp')!({
-        url: URL_FULL, response: 'maybe',
-        firstname: 'A', lastname: 'B', email: 'x@y.co',
-      }, ACCEPT_CTX),
-    ).rejects.toThrow(/unknown/i);
   });
 
   it('rejects invalid URLs before any network call', async () => {
