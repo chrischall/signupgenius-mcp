@@ -38,10 +38,13 @@ const ITEM: FormItem = {
 const CLAIM = {
   url: '10C0849AAAA2EA4FD0-62393618-20262027',
   slotitemid: 1762735186,
-  firstname: 'Chris',
-  lastname: 'Hall',
-  email: 'chris@example.com',
+  firstname: 'Pat',
+  lastname: 'Rivera',
+  email: 'pat@example.com',
 };
+
+/** The signed-in account's profile (synthetic). CLAIM matches it. */
+const PROFILE = { id: 4262737, firstname: 'Pat', lastname: 'Rivera', email: 'pat@example.com' };
 
 describe('lowerCaseKeys', () => {
   it('lower-cases every top-level key, matching the wizard helper', () => {
@@ -168,6 +171,7 @@ function claimSetup(over: Record<string, unknown> = {}) {
   let fetchCalls = 0;
   const publicFetcher = async () => {
     if (over.participantsThrow) throw new Error('participants unavailable');
+    if (over.participantsThrowRaw) throw 'participants down';
     fetchCalls++;
     // Fail only the post-delete read-back, not the ownership lookup.
     if (typeof over.participantsThrowAfter === 'number' && fetchCalls > over.participantsThrowAfter) {
@@ -195,7 +199,7 @@ function claimSetup(over: Record<string, unknown> = {}) {
           if ((p as { throwsRaw?: boolean })?.throwsRaw) throw 'profile down';
           return { success: true, message: [], data: p?.data };
         }
-        return { success: true, message: [], data: { id: 4262737 } };
+        return { success: true, message: [], data: PROFILE };
       }
       seen.push({ action: o.legacyAction, body: o.body });
       if (o.legacyAction === 's.getSignupInfo') {
@@ -230,7 +234,7 @@ describe('signupgenius_claim_slot', () => {
     // The preview names the human-readable target, not only numeric ids.
     expect(out.preview.title).toBe('Chaperones');
     expect(out.preview.slot).toMatchObject({ label: 'Chaperone', availableBefore: 1 });
-    expect(out.preview.signingUpAs).toBe('Chris Hall <chris@example.com>');
+    expect(out.preview.signingUpAs).toBe('Pat Rivera <pat@example.com>');
     // Nothing that mutates state was called.
     expect(pre).not.toHaveBeenCalled();
     expect(seen.map((s) => s.action)).toEqual([
@@ -405,6 +409,91 @@ describe('signupgenius_claim_slot', () => {
     ).rejects.toThrow(/Slot claim failed.*PHONE.*customFields/s);
   });
 
+  describe('sign-up identity (#706)', () => {
+    const { firstname: _f, lastname: _l, email: _e, ...NO_IDENTITY } = CLAIM;
+    const submitted = (seen: Array<{ action: string; body: unknown }>) =>
+      seen.find((s) => s.action === 's.processSignUpFormHandler')!.body as Record<string, unknown>;
+
+    it('defaults an omitted identity to the signed-in account', async () => {
+      const { handlers, seen } = claimOnly();
+      const h = handlers.get('signupgenius_claim_slot')!;
+      const out = parseText(await h(NO_IDENTITY, TOKEN_CTX)).preview;
+      expect(out.signingUpAs).toBe('Pat Rivera <pat@example.com>');
+      expect(out.identity).toMatchObject({ source: 'account', account: 'Pat Rivera <pat@example.com>' });
+      expect(out).not.toHaveProperty('identityDiffersFromAccount');
+      // The identity is read once, shared with the duplicate check.
+      expect(seen.filter((s) => s.action === 'GET /member/profile')).toHaveLength(1);
+
+      await confirmViaToken(h, NO_IDENTITY);
+      expect(submitted(seen)).toMatchObject({
+        firstname: 'Pat',
+        lastname: 'Rivera',
+        email: 'pat@example.com',
+        displayfirstname: 'Pat',
+        displaylastname: 'Rivera',
+      });
+    });
+
+    it('marks a supplied identity matching the account as supplied, without a warning', async () => {
+      const { handlers } = claimOnly();
+      const out = parseText(
+        await handlers.get('signupgenius_claim_slot')!({ ...CLAIM, email: 'PAT@example.com' }),
+      ).preview;
+      expect(out.identity.source).toBe('supplied');
+      expect(out).not.toHaveProperty('identityDiffersFromAccount');
+    });
+
+    it('flags — but does not block — a different identity, naming both', async () => {
+      const { handlers, seen } = claimOnly();
+      const h = handlers.get('signupgenius_claim_slot')!;
+      const other = { ...NO_IDENTITY, firstname: 'Sam', email: 'sam@example.com' };
+      const out = parseText(await h(other, TOKEN_CTX)).preview;
+      expect(out.identityDiffersFromAccount).toBe(true);
+      expect(out.identityNote).toMatch(/Sam Rivera <sam@example\.com>.*Pat Rivera <pat@example\.com>/s);
+      expect(out.identity).toMatchObject({ source: 'mixed', supplied: ['firstname', 'email'] });
+
+      const done = parseText(await confirmViaToken(h, other));
+      expect(done.submitted).toBe(true);
+      expect(submitted(seen)).toMatchObject({ firstname: 'Sam', email: 'sam@example.com' });
+    });
+
+    it('binds the token to the resolved identity — a preview for the account cannot submit another', async () => {
+      const { handlers, seen, pre } = claimOnly();
+      const h = handlers.get('signupgenius_claim_slot')!;
+      const phase1 = parseText(await h(NO_IDENTITY, TOKEN_CTX));
+      const out = parseText(
+        await h({ ...NO_IDENTITY, email: 'sam@example.com', confirmToken: phase1.confirmToken }, TOKEN_CTX),
+      );
+      expect(out.error).toBe('DRAFT_CHANGED');
+      expect(pre).not.toHaveBeenCalled();
+      expect(seen.some((s) => s.action === 's.processSignUpFormHandler')).toBe(false);
+    });
+
+    it('refuses to default the identity when the profile cannot be read', async () => {
+      const { handlers, pre } = claimOnly({ profile: { throws: true } });
+      await expect(handlers.get('signupgenius_claim_slot')!(NO_IDENTITY)).rejects.toThrow(
+        /Could not read firstname, lastname, email from your SignUpGenius profile/,
+      );
+      expect(pre).not.toHaveBeenCalled();
+    });
+
+    it('still accepts a fully supplied identity when the profile cannot be read, saying so', async () => {
+      const { handlers } = claimOnly({ profile: { throws: true } });
+      const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM)).preview;
+      expect(out.identity.accountCheck).toMatch(/could not compare/);
+      expect(out).not.toHaveProperty('identityDiffersFromAccount');
+    });
+
+    it('puts the mismatch in the elicitation prompt text', async () => {
+      const { handlers } = claimOnly();
+      const res = (await handlers.get('signupgenius_claim_slot')!(
+        { ...CLAIM, firstname: 'Sam' },
+        ELICIT_CTX,
+      )) as unknown as { inputRequests: Record<string, { params?: { message?: string } }> };
+      expect(JSON.stringify(res.inputRequests)).toMatch(/NOT the signed-in account/);
+    });
+  });
+
   describe('duplicate-entry guard (#234)', () => {
     const MINE_ROW = { firstname: 'Chris', lastname: 'Hall', myqty: 1, itemmemberid: 2000004, memberid: 4262737 };
     const OTHER_ROW = { firstname: 'Someone', lastname: 'Else', myqty: 1, itemmemberid: 2000005, memberid: 987654 };
@@ -448,6 +537,12 @@ describe('signupgenius_claim_slot', () => {
       const { handlers } = claimOnly({ profile: { throws: true } });
       const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM)).preview;
       expect(out.duplicateCheck).toMatch(/could not check/);
+    });
+
+    it('reports a non-Error participant failure verbatim', async () => {
+      const { handlers } = claimOnly({ participantsThrowRaw: true });
+      const out = parseText(await handlers.get('signupgenius_claim_slot')!(CLAIM)).preview;
+      expect(out.duplicateCheck).toMatch(/participant lookup failed: participants down/);
     });
 
     it('reports a non-Error lookup failure verbatim', async () => {

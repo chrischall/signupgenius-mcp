@@ -4,6 +4,7 @@ import { confirmTokenParam } from '@chrischall/mcp-utils';
 import type { SignUpGeniusClient } from '../client.js';
 import { confirmWrite, textContent } from './_shared.js';
 import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
+import { readProfile, resolveIdentity } from './identity.js';
 
 /**
  * Authenticated RSVP write tool — session/fetchproxy mode only.
@@ -147,9 +148,27 @@ const inputSchema = z.object({
     .optional()
     .describe('Child guest count. Defaults to 0.'),
   comment: z.string().max(500).optional().describe('Optional comment shown to the sign-up owner.'),
-  firstname: z.string().min(1),
-  lastname: z.string().min(1),
-  email: z.string().email(),
+  firstname: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Optional. Defaults to the signed-in account\'s first name. Supply it only to respond ' +
+        'for someone else (e.g. a family member); the preview then flags identityDiffersFromAccount.',
+    ),
+  lastname: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe('Optional. Defaults to the signed-in account\'s last name.'),
+  email: z
+    .string()
+    .trim()
+    .email()
+    .optional()
+    .describe('Optional. Defaults to the signed-in account\'s email.'),
   confirmToken: confirmTokenParam,
 });
 
@@ -279,7 +298,10 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         'one; otherwise the first call sends nothing and returns the preview (sheet, ' +
         'response, head counts, identity) and a confirmToken, and only a repeat call with ' +
         'the same arguments plus that token submits — show the preview to the user and get ' +
-        'their approval first (MCP_CONFIRM_MODE). Refuses when the signed-in member already has a ' +
+        'their approval first (MCP_CONFIRM_MODE). Responds as the signed-in account by ' +
+        'default: omit firstname/lastname/email unless the user is responding for someone ' +
+        'else. A supplied identity that differs from the account is allowed but flagged in ' +
+        'the preview (identityDiffersFromAccount) — point it out to the user. Refuses when the signed-in member already has a ' +
         'response on the sheet (it can only ADD a response, so a second one would ' +
         'double-count) — change an existing answer in the SignUpGenius web UI. Slot-based ' +
         'sign-ups (e.g. "claim the 3pm slot") are NOT handled here — use ' +
@@ -331,7 +353,12 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         );
       }
 
-      const payload = buildRsvpPayload(parts, info, args);
+      // #706: default the identity from the account and flag an override.
+      const who = resolveIdentity(
+        { firstname: args.firstname, lastname: args.lastname, email: args.email },
+        await readProfile(client),
+      );
+      const payload = buildRsvpPayload(parts, info, { ...args, ...who.identity });
       const preview = {
         signupid: parts.signupid,
         urlid: parts.urlid,
@@ -340,20 +367,24 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         adults: payload.rsvpadult,
         children: payload.rsvpchildren,
         comment: payload.rsvpcomments,
-        respondingAs: `${args.firstname} ${args.lastname} <${args.email}>`,
+        respondingAs: `${who.preview.name} <${who.preview.email}>`,
+        identity: who.preview,
+        ...(who.differs ? { identityDiffersFromAccount: true, identityNote: who.note } : {}),
         duplicateCheck:
           mine.status === 'none'
             ? 'no existing response from the signed-in member on this sheet'
             : `could not check for an existing response (${mine.reason})`,
       };
       // SEC-1: bound to this tool, this sheet and the exact wire payload
-      // (response letter, head counts, comment, identity).
+      // (response letter, head counts, comment, RESOLVED identity) — so a
+      // preview approved for one person cannot submit as another.
       const gate = await confirmWrite(ctx, client, {
         tool: 'signupgenius_rsvp',
         action: 'signupgenius.rsvp',
         message:
-          `Review and confirm this RSVP to "${info.title}". The organizer will see your ` +
-          'response and head count.',
+          `Review and confirm this RSVP to "${info.title}" as ${preview.respondingAs}. The ` +
+          'organizer will see this name, the response and the head count.' +
+          (who.note ? ` ${who.note}` : ''),
         confirmationLabel: 'Send this RSVP now.',
         confirmToken: args.confirmToken,
         target: String(parts.signupid),
