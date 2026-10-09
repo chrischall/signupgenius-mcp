@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.1.9](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.8...v2.1.9) (2026-10-09)
+
+
+### Bug Fixes
+
+* annotate tools truthfully and sync manifests with the served tools ([#235](https://github.com/chrischall/signupgenius-mcp/issues/235)) ([3466583](https://github.com/chrischall/signupgenius-mcp/commit/3466583510d452e5ea3151adfa2393cd4e38ffea))
+* **claims:** default sign-up identity to your account and flag a different one ([#231](https://github.com/chrischall/signupgenius-mcp/issues/231)) ([d557e3a](https://github.com/chrischall/signupgenius-mcp/commit/d557e3a0c9a6c7b65d36f26be6dadc022ae2cb25))
+* **deps:** update @chrischall/mcp-utils to 3.0.0 ([#234](https://github.com/chrischall/signupgenius-mcp/issues/234)) ([bef0f14](https://github.com/chrischall/signupgenius-mcp/commit/bef0f14cb2b5064244abd741558b02da7a53384f))
+* resolve low-severity audit findings ([#227](https://github.com/chrischall/signupgenius-mcp/issues/227)) ([c902519](https://github.com/chrischall/signupgenius-mcp/commit/c9025193a19f287655e1515ab580ee1934f4e9fa))
+
+
+### Documentation
+
+* **healthcheck:** note the changed credential source strings ([#230](https://github.com/chrischall/signupgenius-mcp/issues/230)) ([eef831e](https://github.com/chrischall/signupgenius-mcp/commit/eef831ed3c48a1f1e997e9ee25da05d22555e30f))
+* move the elicitation-off note back into the confirmation paragraph ([#233](https://github.com/chrischall/signupgenius-mcp/issues/233)) ([fd485b3](https://github.com/chrischall/signupgenius-mcp/commit/fd485b36348baa36d3020ffc408b39100a03a2bb))
+
 ## [2.1.8](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.7...v2.1.8) (2026-10-07)
 
 
