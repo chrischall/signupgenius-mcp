@@ -793,3 +793,48 @@ describe('SignUpGeniusClient.authSource (fleet-audit#705)', () => {
     expect(new SignUpGeniusClient(null, { configError: new Error('x') }).authSource).toBeNull();
   });
 });
+
+describe('isSessionExpired — login-page sniffing is scoped to JSON calls (fleet-audit#1112)', () => {
+  // SignUpGenius page chrome carries an `index.cfm?go=c.Login` link, and the
+  // HTML navigations (DeletePerson, PreProcessSignup) answer with full pages
+  // that need not set a content-type. Reading such a page as "session expired"
+  // re-logs-in and REPLAYS the write.
+  const PAGE_WITH_LOGIN_LINK =
+    '<!doctype html><html><body><nav><a href="/index.cfm?go=c.Login">Log in</a></nav>' +
+    '<p>You have been removed from this slot.</p></body></html>';
+  const fakeLogin = vi.fn(async () => ({ accessToken: 'jwt', cookieHeader: 'a=b' }));
+  afterEach(() => fakeLogin.mockClear());
+
+  const headerless = (body: string, status = 200) => {
+    const r = new Response(body, { status });
+    r.headers.delete('content-type');
+    return r;
+  };
+
+  it('does not replay a DeletePerson whose success page links to the login form', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => headerless(PAGE_WITH_LOGIN_LINK));
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: fakeLogin });
+    await expect(client.deletePerson(1, 2, 3)).resolves.toBeUndefined();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(fakeLogin).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not replay a PreProcessSignup POST over a page that links to the login form', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => headerless(PAGE_WITH_LOGIN_LINK));
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: fakeLogin });
+    await expect(client.preProcessSignUp('ABC')).rejects.toThrow(/returned status 200/);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(fakeLogin).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not read a header-less JSON envelope echoing the markers as the login page', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      headerless(JSON.stringify({ data: { title: 'loginform drill' }, message: [], success: true })),
+    );
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: fakeLogin });
+    const out = await client.request<{ title: string }>('/signups/created');
+    expect(out.data.title).toBe('loginform drill');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(fakeLogin).toHaveBeenCalledTimes(1);
+  });
+});

@@ -86,12 +86,20 @@ async function isSessionExpired(res: Response): Promise<boolean> {
     const legacyText = await res.clone().text();
     if (LEGACY_LOGGED_OUT.test(legacyText)) return true;
   }
-  // Shape 2 stays gated to non-JSON responses, as before: the login-page
-  // markers are short enough that scanning JSON bodies for them could
-  // plausibly misfire on user-authored sign-up content.
+  // Shape 2 applies only where JSON was expected (authedFetch calls). The HTML
+  // navigations — DeletePerson, PreProcessSignup — answer with full pages whose
+  // chrome routinely links to `index.cfm?go=c.Login`, so sniffing them would
+  // read a SUCCESSFUL write as expiry and replay it (fleet-audit#1112); those
+  // callers detect a lapsed session by status / Location instead.
+  if (!jsonResponses.has(res)) return false;
+  // Gated to non-JSON responses: the login-page markers are short enough that
+  // scanning JSON bodies for them could misfire on user-authored sign-up
+  // content. The dispatcher does not set content-type dependably, so a body
+  // that parses as JSON is not the login page whatever its headers say.
   const ct = res.headers.get('content-type') ?? '';
   if (ct && !ct.includes('text/html')) return false;
   const text = await res.clone().text();
+  if (parseJsonBody<unknown>(text) !== null) return false;
   return /loginform|loginemail|go=c\.Login/i.test(text);
 }
 
@@ -102,6 +110,12 @@ async function isSessionExpired(res: Response): Promise<boolean> {
  * ours to mutate) and lets entries be collected with the responses.
  */
 const legacyResponses = new WeakSet<Response>();
+
+/**
+ * Responses to calls that expected a JSON body (everything routed through
+ * `authedFetch`). Only these can carry the HTML-login-page expiry shape.
+ */
+const jsonResponses = new WeakSet<Response>();
 
 export class SignUpGeniusClient {
   private account: Account | null;
@@ -339,8 +353,8 @@ export class SignUpGeniusClient {
     // A lapsed ColdFusion session does NOT 4xx here — the dispatcher answers a
     // 3xx to the login page, which `redirect: 'manual'` hands back verbatim and
     // a bare `status >= 400` check would read as success. `isSessionExpired`
-    // cannot rescue this either: it fires on a 401, or on a 200 whose BODY
-    // carries the login markers, and this is neither. Catch it by destination.
+    // cannot rescue this either: it fires on a 401 (and never sniffs this HTML
+    // navigation's body), and this is a 3xx. Catch it by destination.
     // (The two session clocks are independent — see the CLAUDE.md quirk — so a
     // valid JWT is no guarantee the CF session is still alive.)
     const location = res.headers.get('location') ?? '';
@@ -401,6 +415,7 @@ export class SignUpGeniusClient {
     opts: { legacy?: boolean } = {},
   ): Promise<Response> {
     const mark = (res: Response): Response => {
+      jsonResponses.add(res);
       if (opts.legacy) legacyResponses.add(res);
       return res;
     };
