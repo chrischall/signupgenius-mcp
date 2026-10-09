@@ -7,6 +7,7 @@ import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
 import type { Fetcher } from './sug-legacy.js';
 import { timedFetch } from '../http.js';
 import { fetchAllParticipants, type Participant } from './slots.js';
+import { readProfile, resolveIdentity, type ProfileLookup } from './identity.js';
 
 /**
  * Slot claim + release — the two core participant WRITES.
@@ -176,9 +177,27 @@ const claimSchema = z.object({
     .describe('The slot to claim. Get this from signupgenius_list_slots.'),
   quantity: z.number().int().min(1).max(99).optional().describe('Spots to take. Default 1.'),
   comment: z.string().max(500).optional().describe('Optional comment shown to the organizer.'),
-  firstname: z.string().min(1),
-  lastname: z.string().min(1),
-  email: z.string().email(),
+  firstname: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Optional. Defaults to the signed-in account\'s first name. Supply it only to sign up ' +
+        'someone else (e.g. a family member); the preview then flags identityDiffersFromAccount.',
+    ),
+  lastname: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe('Optional. Defaults to the signed-in account\'s last name.'),
+  email: z
+    .string()
+    .trim()
+    .email()
+    .optional()
+    .describe('Optional. Defaults to the signed-in account\'s email.'),
   customFields: z
     .array(
       z.object({
@@ -234,24 +253,18 @@ type OwnEntryLookup =
 /**
  * Find the signed-in member's entry on one slot, if any. Never throws — an
  * unreadable identity or participant list comes back as `unknown` so the
- * caller decides how much to trust the absence of a match.
+ * caller decides how much to trust the absence of a match. The profile is
+ * read once by the caller and shared with the identity resolution.
  */
 async function findOwnEntry(
-  client: SignUpGeniusClient,
+  profile: ProfileLookup,
   fetcher: Fetcher,
   listid: number,
   slotitemid: number,
 ): Promise<OwnEntryLookup> {
-  let myId: unknown;
-  try {
-    const profileRes = await client.request<{ id?: number; memberid?: number }>(
-      '/member/profile',
-    );
-    myId = profileRes.data?.id ?? profileRes.data?.memberid;
-  } catch (err) {
-    return { status: 'unknown', reason: `profile lookup failed: ${errMessage(err)}` };
-  }
-  if (typeof myId !== 'number') {
+  if (profile.status === 'unknown') return profile;
+  const myId = profile.memberId;
+  if (myId === undefined) {
     return { status: 'unknown', reason: 'signed-in member id unavailable' };
   }
   let entries: Participant[];
@@ -287,8 +300,11 @@ export function registerSlotWriteTools(
         'the client supports one; otherwise the first call writes nothing and returns the ' +
         'preview (sheet, slot, identity) and a confirmToken, and only a repeat call with the ' +
         'same arguments plus that token submits — show the preview to the user and get their ' +
-        'approval first (MCP_CONFIRM_MODE). For Yes/No/Maybe headcount sheets use ' +
-        'signupgenius_rsvp instead.',
+        'approval first (MCP_CONFIRM_MODE). Signs up as the signed-in account by default: ' +
+        'omit firstname/lastname/email unless the user is signing up someone else (e.g. a ' +
+        'family member). A supplied identity that differs from the account is allowed but ' +
+        'flagged in the preview (identityDiffersFromAccount) — point it out to the user. ' +
+        'For Yes/No/Maybe headcount sheets use signupgenius_rsvp instead.',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: claimSchema,
     },
@@ -344,13 +360,19 @@ export function registerSlotWriteTools(
         );
       }
 
+      // #706: default the identity from the account and flag an override.
+      // One profile read serves both this and the duplicate check below.
+      const profile = await readProfile(client);
+      const who = resolveIdentity(
+        { firstname: args.firstname, lastname: args.lastname, email: args.email },
+        profile,
+      );
+
       const payload = buildClaimPayload(parts, info, items, {
         slotitemid: args.slotitemid,
         quantity,
         comment: args.comment,
-        firstname: args.firstname,
-        lastname: args.lastname,
-        email: args.email,
+        ...who.identity,
         customFields: args.customFields ?? [],
       });
 
@@ -360,7 +382,7 @@ export function registerSlotWriteTools(
       // submitting. Best-effort: if identity or the participant list can't be
       // read, the claim still proceeds, but the preview says the check was
       // skipped rather than implying it passed.
-      const mine = await findOwnEntry(client, fetcher, parts.signupid, args.slotitemid);
+      const mine = await findOwnEntry(profile, fetcher, parts.signupid, args.slotitemid);
       if (mine.status === 'found') {
         throw new Error(
           `You are already signed up for slot ${args.slotitemid} on ${parts.urlid} ` +
@@ -382,7 +404,9 @@ export function registerSlotWriteTools(
           location: item.LOCATION,
           availableBefore: available ?? 'unlimited/unreported',
         },
-        signingUpAs: `${args.firstname} ${args.lastname} <${args.email}>`,
+        signingUpAs: `${who.preview.name} <${who.preview.email}>`,
+        identity: who.preview,
+        ...(who.differs ? { identityDiffersFromAccount: true, identityNote: who.note } : {}),
         quantity,
         comment: args.comment ?? '',
         customFields: payload.customFields,
@@ -393,14 +417,16 @@ export function registerSlotWriteTools(
       };
 
       // SEC-1: the gate binds the token to this tool, this slot and the exact
-      // wire payload (which carries the slot row, quantity, comment, identity
-      // and custom answers), so a token can never authorise a different claim.
+      // wire payload (which carries the slot row, quantity, comment, RESOLVED
+      // identity and custom answers), so a token can never authorise a
+      // different claim — including one for a different person.
       const gate = await confirmWrite(ctx, client, {
         tool: 'signupgenius_claim_slot',
         action: 'signupgenius.claim_slot',
         message:
-          `Review and confirm this sign-up for "${info.title}". The organizer will see ` +
-          'your name on the sheet.',
+          `Review and confirm this sign-up for "${info.title}" as ${preview.signingUpAs}. ` +
+          'The organizer will see this name on the sheet.' +
+          (who.note ? ` ${who.note}` : ''),
         confirmationLabel: 'Claim this slot now.',
         confirmToken: args.confirmToken,
         target: `${parts.signupid}:${args.slotitemid}`,
@@ -429,7 +455,7 @@ export function registerSlotWriteTools(
         // The failure may be ambiguous: the server can commit the claim and
         // still answer with a 5xx / non-JSON body. Re-read before inviting a
         // resend, because a resend books a SECOND entry.
-        const after = await findOwnEntry(client, fetcher, parts.signupid, args.slotitemid);
+        const after = await findOwnEntry(profile, fetcher, parts.signupid, args.slotitemid);
         if (after.status === 'found') {
           throw new Error(
             `Slot claim reported an error (${detail}), but an entry for you IS now listed on the ` +

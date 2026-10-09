@@ -85,7 +85,9 @@ curl -s -X POST 'https://www.signupgenius.com/SUGboxAPI.cfm?go=t.getMySignups' \
 
 Ready-to-run request bodies for every tool endpoint (groups, sign-up
 listings, public sign-up lookup, and the 3-step RSVP flow) are in
-`references/sug-endpoints.md`.
+`references/sug-endpoints.md`. RSVPs and slot claims send a name and email,
+but the entry is tied to the signed-in account whatever you send, so default
+them to the `/v3/member/profile` values unless you mean to sign up someone else.
 
 ## The two envelope shapes
 

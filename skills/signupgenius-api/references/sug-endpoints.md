@@ -181,7 +181,13 @@ must always be present as `[]` — the CFML validator throws
 `key [RSVPITEMS] doesn't exist` if it's omitted. `changemembermame` is
 SignUpGenius's own typo — preserve it verbatim. `rsvpresponse` is a single
 letter: `y`/`n`/`m`. A `n` response forces both guest counts to `0`
-regardless of what you pass:
+regardless of what you pass.
+
+`firstname`/`lastname`/`email` are whatever name the organizer will see, but
+the entry is tied to the signed-in account either way. Take them from
+`/v3/member/profile` (`.data.firstname`, `.data.lastname`, `.data.email`)
+unless you mean to sign up someone else, as the MCP's `signupgenius_rsvp` and
+`signupgenius_claim_slot` do by default:
 
 ```sh
 OWNER=$(jq -r '.DATA.owner' /tmp/sug-signupinfo.json)

@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SignUpGeniusClient } from '../client.js';
 import { textContent } from './_shared.js';
+import { profilePath } from './identity.js';
 
 export function registerUserTools(server: McpServer, client: SignUpGeniusClient): void {
   server.registerTool(
@@ -13,8 +14,7 @@ export function registerUserTools(server: McpServer, client: SignUpGeniusClient)
       annotations: { readOnlyHint: true },
     },
     async () => {
-      const path = client.mode === 'session' ? '/member/profile' : '/user/profile';
-      const data = await client.request(path);
+      const data = await client.request(profilePath(client.mode));
       return textContent(data);
     },
   );

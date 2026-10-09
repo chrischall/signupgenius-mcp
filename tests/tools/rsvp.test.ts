@@ -146,9 +146,20 @@ describe('buildRsvpPayload', () => {
   });
 });
 
-function makeClient(account = sessionAccount, signedUpFor: unknown = []) {
+/** The signed-in account's profile (synthetic). */
+const PROFILE = { id: 1001, firstname: 'Pat', lastname: 'Rivera', email: 'pat@example.com' };
+
+function makeClient(
+  account = sessionAccount,
+  signedUpFor: unknown = [],
+  profile: (() => unknown) | unknown = PROFILE,
+) {
   const client = new SignUpGeniusClient(account);
   const requestSpy = vi.spyOn(client, 'request').mockImplementation(async (path, opts) => {
+    if (path === '/member/profile') {
+      const data = typeof profile === 'function' ? (profile as () => unknown)() : profile;
+      return { data, message: [], success: true } as never;
+    }
     if (path === '/signups/signedupfor') {
       return { data: signedUpFor, message: [], success: true } as never;
     }
@@ -199,9 +210,9 @@ describe('signupgenius_rsvp tool', () => {
       url: URL_FULL,
       response: 'yes',
       adults: 4,
-      firstname: 'Chris',
-      lastname: 'Hall',
-      email: 'chris@example.com',
+      firstname: 'Pat',
+      lastname: 'Rivera',
+      email: 'pat@example.com',
     })) as { content: Array<{ text: string }> };
 
     const res = JSON.parse(result.content[0].text);
@@ -211,11 +222,12 @@ describe('signupgenius_rsvp tool', () => {
     // The preview names the sheet by title, not only by id.
     expect(out.title).toBe('Myers Park Bands Spring Banquet');
     expect(out).toMatchObject({ response: 'yes', adults: 4, children: 0 });
-    expect(out.respondingAs).toBe('Chris Hall <chris@example.com>');
+    expect(out.respondingAs).toBe('Pat Rivera <pat@example.com>');
     expect(out.duplicateCheck).toMatch(/no existing response/);
     // Only reads happened: no PreProcessSignup, no submit.
     expect(preSpy).not.toHaveBeenCalled();
-    expect(requestSpy).toHaveBeenCalledTimes(2);
+    expect(requestSpy).toHaveBeenCalledTimes(3);
+    expect(requestSpy).toHaveBeenCalledWith('/member/profile');
     expect(requestSpy).toHaveBeenCalledWith('', {
       legacyAction: 's.getSignupInfo',
       body: { urlid: SLUG },
@@ -311,7 +323,8 @@ describe('signupgenius_rsvp tool', () => {
       body: { urlid: SLUG },
     });
     expect(requestSpy).toHaveBeenNthCalledWith(2, '/signups/signedupfor');
-    expect(requestSpy).toHaveBeenNthCalledWith(3, '', {
+    expect(requestSpy).toHaveBeenNthCalledWith(3, '/member/profile');
+    expect(requestSpy).toHaveBeenNthCalledWith(4, '', {
       legacyAction: 's.processSignUpFormHandler',
       body: expect.objectContaining({
         type: 'rsvp',
@@ -325,6 +338,74 @@ describe('signupgenius_rsvp tool', () => {
     const payload = JSON.parse(result.content[0].text);
     expect(payload.success).toBe(true);
     expect(payload.submitted).toBe(true);
+  });
+
+  describe('responding identity (#706)', () => {
+    const BASE = { url: URL_FULL, response: 'yes' };
+    const submittedBody = (spy: ReturnType<typeof makeClient>['requestSpy']) =>
+      spy.mock.calls.find(
+        ([, o]) => (o as { legacyAction?: string } | undefined)?.legacyAction === 's.processSignUpFormHandler',
+      )![1] as { body: Record<string, unknown> };
+
+    it('defaults an omitted identity to the signed-in account', async () => {
+      const { client, requestSpy } = makeClient();
+      const h = attachTool(client).get('signupgenius_rsvp')!;
+      const out = parseText(await h(BASE, TOKEN_CTX)).preview;
+      expect(out.respondingAs).toBe('Pat Rivera <pat@example.com>');
+      expect(out.identity).toMatchObject({ source: 'account', fromAccount: ['firstname', 'lastname', 'email'] });
+      expect(out).not.toHaveProperty('identityDiffersFromAccount');
+
+      await confirmViaToken(h, BASE);
+      expect(submittedBody(requestSpy).body).toMatchObject({
+        firstname: 'Pat',
+        lastname: 'Rivera',
+        email: 'pat@example.com',
+        displayfirstname: 'Pat',
+      });
+    });
+
+    it('flags — but does not block — a different identity, naming both', async () => {
+      const { client, requestSpy } = makeClient();
+      const h = attachTool(client).get('signupgenius_rsvp')!;
+      const other = { ...BASE, firstname: 'Sam', lastname: 'Rivera', email: 'sam@example.com' };
+      const out = parseText(await h(other, TOKEN_CTX)).preview;
+      expect(out.identityDiffersFromAccount).toBe(true);
+      expect(out.identityNote).toMatch(/Sam Rivera <sam@example\.com>.*Pat Rivera <pat@example\.com>/s);
+      expect(out.identity.source).toBe('supplied');
+      expect(parseText(await confirmViaToken(h, other)).submitted).toBe(true);
+      expect(submittedBody(requestSpy).body).toMatchObject({ email: 'sam@example.com' });
+    });
+
+    it('treats a case-only email difference as the same account', async () => {
+      const { client } = makeClient();
+      const out = parseText(
+        await attachTool(client).get('signupgenius_rsvp')!({ ...BASE, email: 'Pat@Example.COM' }),
+      ).preview;
+      expect(out).not.toHaveProperty('identityDiffersFromAccount');
+      expect(out.identity.source).toBe('mixed');
+    });
+
+    it('binds the token to the resolved identity', async () => {
+      const { client, requestSpy, preSpy } = makeClient();
+      const h = attachTool(client).get('signupgenius_rsvp')!;
+      const phase1 = parseText(await h(BASE, TOKEN_CTX));
+      const out = parseText(
+        await h({ ...BASE, firstname: 'Sam', confirmToken: phase1.confirmToken }, TOKEN_CTX),
+      );
+      expect(out.error).toBe('DRAFT_CHANGED');
+      expect(preSpy).not.toHaveBeenCalled();
+      expect(requestSpy).not.toHaveBeenCalledWith('', expect.objectContaining({
+        legacyAction: 's.processSignUpFormHandler',
+      }));
+    });
+
+    it('refuses to default the identity when the profile has no email', async () => {
+      const { client, preSpy } = makeClient(sessionAccount, [], { id: 1001, firstname: 'Pat', lastname: 'Rivera' });
+      await expect(attachTool(client).get('signupgenius_rsvp')!(BASE)).rejects.toThrow(
+        /Could not read email from your SignUpGenius profile/,
+      );
+      expect(preSpy).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects item-based RSVPs with a clear, scope-limiting error', async () => {
