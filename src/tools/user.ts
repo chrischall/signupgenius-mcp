@@ -11,7 +11,7 @@ export function registerUserTools(server: McpServer, client: SignUpGeniusClient)
         "Get the SignUpGenius profile of the authenticated user (name, email, member ID, " +
         'subscription level). Useful as a first call to confirm credentials. ' +
         'Key mode hits /v2/k/user/profile; session mode hits /v3/member/profile.',
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async () => {
       const data = await client.request(profilePath(client.mode));

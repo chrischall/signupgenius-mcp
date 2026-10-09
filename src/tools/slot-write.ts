@@ -305,7 +305,7 @@ export function registerSlotWriteTools(
         'family member). A supplied identity that differs from the account is allowed but ' +
         'flagged in the preview (identityDiffersFromAccount) — point it out to the user. ' +
         'For Yes/No/Maybe headcount sheets use signupgenius_rsvp instead.',
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: claimSchema,
     },
     async (raw, ctx) => {
@@ -494,7 +494,7 @@ export function registerSlotWriteTools(
         'the preview (sheet, slot, whose entry) and a confirmToken, and only a repeat call ' +
         'with the same arguments plus that token withdraws — show the preview to the user ' +
         'and get their approval first (MCP_CONFIRM_MODE).',
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       inputSchema: releaseSchema,
     },
     async (raw, ctx) => {

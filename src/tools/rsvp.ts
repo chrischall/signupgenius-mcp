@@ -306,7 +306,7 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         'double-count) — change an existing answer in the SignUpGenius web UI. Slot-based ' +
         'sign-ups (e.g. "claim the 3pm slot") are NOT handled here — use ' +
         'signupgenius_claim_slot for those.',
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       inputSchema: inputSchema,
     },
     async (raw, ctx) => {
