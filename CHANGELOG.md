@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.10](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.9...v2.1.10) (2026-10-10)
+
+
+### Bug Fixes
+
+* **deps:** bump source-map-js from 1.2.1 to 1.2.2 in the security group across 1 directory ([#236](https://github.com/chrischall/signupgenius-mcp/issues/236)) ([e57c680](https://github.com/chrischall/signupgenius-mcp/commit/e57c680ef054d71724cf4713146c7551adeee4c6))
+
 ## [2.1.9](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.8...v2.1.9) (2026-10-09)
 
 
