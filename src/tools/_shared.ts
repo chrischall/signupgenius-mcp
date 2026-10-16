@@ -51,6 +51,17 @@ const ASK_USER_INSTRUCTION =
   'with the same arguments plus confirmToken.';
 
 /**
+ * Why this is NOT `confirmWrite` from @chrischall/mcp-utils (fleet-audit#1333):
+ * the kit always binds the displayed preview (`shown`) into both rails, so a
+ * preview that changes between the two calls is DRAFT_CHANGED. Here the
+ * preview carries volatile display-only facts — the duplicate-check result
+ * (which can flip between "could not check" and a definite answer on a
+ * transient read) and live slot availability — and refusing the token over
+ * them would make claims fail for reasons unrelated to what is sent. The wire
+ * payload, tool, account, target and arguments ARE bound, exactly as the kit
+ * binds them; tests/tools/_shared.test.ts pins both halves. Revisit if the kit
+ * gains an opt-out for binding the preview.
+ *
  * The fleet confirmation gate for every SignUpGenius write: an elicitation
  * prompt where the caller supports one, otherwise the two-phase confirm-token
  * flow (MCP_CONFIRM_MODE) bound to this tool, the signed-in account, the target
