@@ -819,6 +819,31 @@ describe('isSessionExpired — login-page sniffing is scoped to JSON calls (flee
     expect(fakeLogin).toHaveBeenCalledTimes(1);
   });
 
+  it('re-logs-in and replays PreProcessSignup once when it redirects to the login page (fleet-audit#1331)', async () => {
+    // A lapsed ColdFusion session answers PreProcessSignup with a 3xx to the
+    // login form. Accepting any 3xx read that as success, and the claim then
+    // failed one step later with a misleading "none to be processed".
+    const login = vi.fn(async () => ({ accessToken: 'jwt', cookieHeader: 'a=b' }));
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('', { status: 302, headers: { location: '/index.cfm?go=c.Login' } }) as never)
+      .mockResolvedValueOnce(new Response('', { status: 301, headers: { location: '/index.cfm?go=s.ProcessSignup' } }) as never);
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: login });
+    await expect(client.preProcessSignUp('ABC')).resolves.toBeUndefined();
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(login).toHaveBeenCalledTimes(2);
+  });
+
+  it('names the lapsed session when PreProcessSignup still redirects to the login page after a re-login', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response('', { status: 302, headers: { location: '/index.cfm?go=c.Login' } }),
+    );
+    const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: fakeLogin });
+    const err = await client.preProcessSignUp('ABC').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AuthError);
+    expect((err as Error).message).toMatch(/login page/i);
+  });
+
   it('does not replay a PreProcessSignup POST over a page that links to the login form', async () => {
     const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => headerless(PAGE_WITH_LOGIN_LINK));
     const client = new SignUpGeniusClient(sessionAccount, { sessionLogin: fakeLogin });

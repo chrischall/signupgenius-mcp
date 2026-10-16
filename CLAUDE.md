@@ -53,7 +53,7 @@ Non-https values for any `*_URL`/`*_BASE_URL` override throw `<var> must be an h
 - `src/auth.ts` — `resolveAuth()`: three-path priority. Reuses `loadAccount()` for env-var resolution, then falls through to bootstrap. Catches only the specific "Missing SignUpGenius auth config" error from `loadAccount()` — partial-config and validation errors still propagate.
 - `src/auth-session-login.ts` — `sessionLogin()`: legacy form-POST. Isolated so tests can mock it at the module boundary.
 - `src/config.ts` — `loadAccount()`: env-var resolution. Returns either a `KeyAccount`, `SessionAccount`, or throws.
-- `src/client.ts` — `SignUpGeniusClient`: accepts a `preloaded` option. When set (fetchproxy path), the client uses the supplied JWT + cookie header as if it had just successfully run `sessionLogin()`. On a 401 in fetchproxy mode (empty email/password) we surface the error rather than loop on a bad re-login.
+- `src/client.ts` — `SignUpGeniusClient`: takes `{ configError, sessionLogin, refreshSession }`. `refreshSession` (the fetchproxy path) REPLACES the form login: `CookieSessionManager` calls it for the first session and on every detected expiry, re-lifting the JWT + cookie header from the browser. With neither `refreshSession` nor email/password, login throws `AuthError(401)` so the original response surfaces instead of looping on a doomed re-login.
 
 `@fetchproxy/bootstrap` is mocked at the module boundary in `tests/auth.test.ts`. None of the other test files import `bootstrap` — they exercise the existing env-var paths via `loadAccount()` / `SignUpGeniusClient` directly.
 
@@ -70,7 +70,7 @@ Non-https values for any `*_URL`/`*_BASE_URL` override throw `<var> must be an h
 
 ## Architecture
 
-Stdio MCP server. `src/index.ts` loads `.env` quietly, runs `resolveAuth()`, constructs one `SignUpGeniusClient`, and hands it to `runMcp()` from `@chrischall/mcp-utils` along with six tool-registration callbacks.
+Stdio MCP server. `src/index.ts` loads `.env` quietly, runs `resolveAuth()`, constructs one `SignUpGeniusClient`, and hands it to `runMcp()` from `@chrischall/mcp-utils` along with nine tool-registration callbacks.
 
 ```
 src/
@@ -91,7 +91,7 @@ src/
   http.ts                 # timedFetch(): every upstream fetch goes through it — 30s timeout (REQUEST_TIMEOUT_MS)
                           #   combined with the MCP request's cancellation. Never call bare fetch().
   tools/
-    _shared.ts            # textContent() = textResult from @chrischall/mcp-utils (the standard MCP text block)
+    _shared.ts            # textContent() = minifiedResult from @chrischall/mcp-utils; confirmWrite() (see below)
     user.ts               # registerUserTools — signupgenius_get_profile
     groups.ts             # registerGroupTools — list_groups, list/get_group_member, add_group_member (write)
     signups.ts            # registerSignUpTools — list_created_{active,expired,all}, list_invited/signedupfor, legacy_get_my_signups
@@ -112,7 +112,7 @@ tests/                    # mirrors src/ (tests/tools/* for tool files). Mocks S
                           #   @fetchproxy/bootstrap / sessionLogin at the module boundary; no network.
 ```
 
-Each `tools/*.ts` exports a `registerXxx…(server, client)` function — `registerXxxTools` (plural) for the multi-tool files, but the single-tool `rsvp.ts` and `public-signup.ts` export `registerRsvpTool` / `registerPublicSignUpTool` (singular). `public-signup.ts` and `slots.ts` take `(server, fetcher?)` instead of a client, since both bypass it entirely — their endpoints need no auth. `src/index.ts` wires all eight. Schemas use the const-zod pattern: `const args = z.object({...})`; the SDK gets the Zod object directly as `inputSchema: args`, and the handler can use the already validated arguments or call `args.parse(raw)` when it needs an explicit typed value.
+Each `tools/*.ts` exports a `registerXxx…(server, client)` function — `registerXxxTools` (plural) for the multi-tool files, but the single-tool `rsvp.ts` and `public-signup.ts` export `registerRsvpTool` / `registerPublicSignUpTool` (singular). `public-signup.ts` and `slots.ts` take `(server, fetcher?)` instead of a client, since both bypass it entirely — their endpoints need no auth. `src/index.ts` wires all nine (user, healthcheck, groups, signups, reports, public-signup, slots, rsvp, slot-write). Schemas use the const-zod pattern: `const args = z.object({...})`; the SDK gets the Zod object directly as `inputSchema: args`, and the handler can use the already validated arguments or call `args.parse(raw)` when it needs an explicit typed value.
 
 Registration is mode-aware: `client.mode` (which defaults to `'session'` when config is deferred) chooses key-vs-session endpoint paths, gates the session-only `legacy_get_my_signups` and `signupgenius_rsvp` (skipped entirely outside session mode), while report tools always register but throw `KeyModeRequiredError` if invoked outside key mode.
 

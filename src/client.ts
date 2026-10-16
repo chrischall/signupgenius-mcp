@@ -77,6 +77,7 @@ const LEGACY_LOGGED_OUT = /you are no longer logged in/i;
 
 async function isSessionExpired(res: Response): Promise<boolean> {
   if (res.status === 401) return true;
+  if (replayOnLoginRedirect.has(res) && isLoginRedirect(res)) return true;
   if (res.status !== 200) return false;
   // Shape 3 comes ONLY from the legacy /SUGboxAPI.cfm dispatcher. Gate on a
   // marker the dispatcher path sets rather than on content-type (which it does
@@ -117,6 +118,20 @@ const legacyResponses = new WeakSet<Response>();
  * `authedFetch`). Only these can carry the HTML-login-page expiry shape.
  */
 const jsonResponses = new WeakSet<Response>();
+
+/**
+ * Responses to the non-write HTML navigation PreProcessSignup. It only sets a
+ * ColdFusion-session pointer — nothing is claimed yet — so a 3xx to the login
+ * page there is safe to treat as expiry and replay after a re-login
+ * (fleet-audit#1331). DeletePerson is NOT in here: it is the write itself.
+ */
+const replayOnLoginRedirect = new WeakSet<Response>();
+
+/** A 3xx whose Location is SignUpGenius's login form — a lapsed CF session. */
+function isLoginRedirect(res: Response): boolean {
+  if (res.status < 300 || res.status >= 400) return false;
+  return /go=c\.Login|loginform|loginemail/i.test(res.headers.get('location') ?? '');
+}
 
 export class SignUpGeniusClient {
   private account: Account | null;
@@ -290,8 +305,8 @@ export class SignUpGeniusClient {
     this.requireMode('session', 'preProcessSignUp');
     const acct = this.requireAccount() as Extract<Account, { mode: 'session' }>;
     const url = `${acct.legacyBaseUrl}/index.cfm?go=s.PreProcessSignup&URLID=${encodeURIComponent(urlid)}`;
-    const res = await this.session!.withSession((session) =>
-      timedFetch(url, {
+    const res = await this.session!.withSession(async (session) => {
+      const r = await timedFetch(url, {
         method: 'POST',
         redirect: 'manual',
         headers: {
@@ -300,8 +315,19 @@ export class SignUpGeniusClient {
           Accept: 'text/html',
         },
         body: 'ScreenWidth=2000&ScreenHeight=1200',
-      }),
-    );
+      });
+      replayOnLoginRedirect.add(r);
+      return r;
+    });
+    // Still the login page after the one re-login + replay: say so, rather than
+    // letting the claim fail a step later with "none to be processed".
+    if (isLoginRedirect(res)) {
+      throw new AuthError(
+        res.status,
+        `PreProcessSignup for ${urlid} redirected to the login page even after a re-login — the ` +
+          'ColdFusion session has lapsed. Nothing was claimed; retry the sign-up.',
+      );
+    }
     // The browser sees a 301 → /index.cfm?go=s.ProcessSignup. A 200 means the
     // server rendered an error page instead; a 4xx/5xx means the JWT/cookies
     // are stale. Treat anything other than the documented redirect codes as
