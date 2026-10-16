@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.11](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.10...v2.1.11) (2026-10-16)
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group with 5 updates ([#239](https://github.com/chrischall/signupgenius-mcp/issues/239)) ([2f1916c](https://github.com/chrischall/signupgenius-mcp/commit/2f1916c0ee82d4e84723e3d9dd7a43e05518bef1))
+* **session:** re-login when a sign-up's pre-process step lands on the login page ([#241](https://github.com/chrischall/signupgenius-mcp/issues/241)) ([103a0f5](https://github.com/chrischall/signupgenius-mcp/commit/103a0f561a4ff668fc1238f3fccfef148595ab51))
+
 ## [2.1.10](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.9...v2.1.10) (2026-10-10)
 
 
