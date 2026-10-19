@@ -5,6 +5,16 @@ summary: >-
   SignUpGenius MCP — read sign-ups, slots and groups, RSVP, and claim or
   release slots. Three auth paths: Pro API key, email/password, or sign in
   via the ContextMint Bridge browser extension.
+examples:
+  - prompt: >-
+      Which slots are still open on the SignUpGenius sign-up at this link, and
+      who has already signed up?
+    note: Works for any public sign-up link; no login needed.
+  - prompt: What SignUpGenius sign-ups am I signed up for, and when is each one?
+  - prompt: >-
+      List the active sign-ups I created and how many spots are still
+      unfilled on each.
+    note: Spot counts come from each sheet's slot list.
 #
 # Hosting note (a comment, not user-facing summary text): this is a
 # BROWSER-BRIDGE MCP — it reaches its site through the user's signed-in
