@@ -141,6 +141,22 @@ describe('view: brief on the canonical reads', () => {
     expect(c.length).toBeLessThanOrEqual(120);
   });
 
+  it('escapes a bare "--" title, which the separator would otherwise turn into a note', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-04T12:00:00Z'));
+    const out = parse(
+      await brief('signupgenius_list_signedupfor', [
+        { title: '--', startdate: '2026-11-08T13:00:00Z' },
+        { title: '  --  ', startdate: '2026-11-08T13:00:00Z' },
+        { title: '--x', startdate: '2026-11-08T13:00:00Z' },
+      ]),
+    );
+    const [a, b, c] = out.data as string[];
+    expect(a).toBe('\\-- — 2026-11-08 — signed up');
+    expect(b).toBe('\\-- — 2026-11-08 — signed up');
+    expect(c).toBe('--x — 2026-11-08 — signed up');
+  });
+
   it('answers -- none for an empty list', async () => {
     expect(parse(await brief('signupgenius_list_invited', [])).data).toEqual(['-- none']);
   });

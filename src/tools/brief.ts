@@ -72,12 +72,14 @@ const TITLE_FLOOR = 24;
 const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, Math.max(n - 1, 0))}…` : s);
 
 /**
- * A title that starts with `-- ` (a note's prefix) or `\` (the escape itself)
- * gets one leading `\`, which the gateway strips from every item line — so an
- * organizer's title can never masquerade as a note.
+ * A LINE that would start with `-- ` (a note's prefix) or `\` (the escape
+ * itself) gets one leading `\`, which the gateway strips from every item line —
+ * so an organizer's title can never masquerade as a note. The title is tested
+ * with the separator's leading space after it, so a bare `--` title (which the
+ * ` — ` separator would turn into `-- — …`) is escaped too.
  */
 function escapeTitle(title: string): string {
-  return title.startsWith('-- ') || title.startsWith('\\') ? `\\${title}` : title;
+  return `${title} `.startsWith('-- ') || title.startsWith('\\') ? `\\${title}` : title;
 }
 
 /**
