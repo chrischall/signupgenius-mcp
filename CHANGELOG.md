@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.2.0](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.11...v2.2.0) (2026-11-04)
+
+
+### Features
+
+* context-group hints ([#251](https://github.com/chrischall/signupgenius-mcp/issues/251)) ([d1f6c88](https://github.com/chrischall/signupgenius-mcp/commit/d1f6c883b0e74a1824a5205f337f1639de1674f6))
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group across 1 directory with 2 updates ([#250](https://github.com/chrischall/signupgenius-mcp/issues/250)) ([eedaa75](https://github.com/chrischall/signupgenius-mcp/commit/eedaa757615f54bc929b77616ff671b69932e5f2))
+* **deps:** bump the production-dependencies group with 2 updates ([#245](https://github.com/chrischall/signupgenius-mcp/issues/245)) ([60ab008](https://github.com/chrischall/signupgenius-mcp/commit/60ab00865b18984ca2760d4b5e0a11c95d312960))
+* **deps:** bump the production-dependencies group with 4 updates ([#248](https://github.com/chrischall/signupgenius-mcp/issues/248)) ([ab9e4f0](https://github.com/chrischall/signupgenius-mcp/commit/ab9e4f0200a5183c4a9c82ac2a5ef97856f99b52))
+
+
+### Documentation
+
+* **mint:** add sample prompts for the public catalog ([#247](https://github.com/chrischall/signupgenius-mcp/issues/247)) ([3830813](https://github.com/chrischall/signupgenius-mcp/commit/3830813517df4804ce2b7f795bf571aca4f5e7f8))
+
 ## [2.1.11](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.10...v2.1.11) (2026-10-16)
 
 
