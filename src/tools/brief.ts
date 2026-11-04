@@ -9,8 +9,10 @@ import { z } from 'zod';
  * organised the sheet, so the lines go out inside the fleet's untrusted-data
  * envelope as `data: string[]`. A line starting with `-- ` is a note, not an
  * item: `-- none` for an empty list, `-- error: …` for an answer this rung
- * cannot read. The listings are unpaginated upstream, so there is no
- * `-- N of M shown` note to make.
+ * cannot read. A title that starts like a note (or with `\`) is escaped with
+ * one leading `\`, and each line is cut to 120 as a whole, title first. The
+ * listings are unpaginated upstream, so there is no `-- N of M shown` note to
+ * make.
  */
 export const briefViewArg = z
   .enum(['full', 'brief'])
@@ -61,10 +63,36 @@ export function briefLine(row: unknown, kind: BriefKind, today: string): string 
         : rsvp
           ? `rsvp ${rsvp}`
           : 'signed up';
-  const tail = ` — ${start ?? end ?? 'no date'} — ${status}`;
-  const room = BRIEF_MAX - tail.length;
-  const shown = title.length > room ? `${title.slice(0, room - 1)}…` : title;
-  return `${shown}${tail}`;
+  return fitLine(escapeTitle(title), ` — ${start ?? end ?? 'no date'} — `, status);
+}
+
+/** The shortest a title is cut to before the status gives way too. */
+const TITLE_FLOOR = 24;
+
+const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, Math.max(n - 1, 0))}…` : s);
+
+/**
+ * A LINE that would start with `-- ` (a note's prefix) or `\` (the escape
+ * itself) gets one leading `\`, which the gateway strips from every item line —
+ * so an organizer's title can never masquerade as a note. The title is tested
+ * with the separator's leading space after it, so a bare `--` title (which the
+ * ` — ` separator would turn into `-- — …`) is escaped too.
+ */
+function escapeTitle(title: string): string {
+  return `${title} `.startsWith('-- ') || title.startsWith('\\') ? `\\${title}` : title;
+}
+
+/**
+ * Cut the line to ≤ 120 chars as a WHOLE, title first: the title shortens
+ * until the line fits; if the status (an rsvp answer is free text) would
+ * still overflow with the title at its floor, it is cut too.
+ */
+function fitLine(title: string, sep: string, status: string): string {
+  const room = BRIEF_MAX - sep.length;
+  if (title.length + status.length <= room) return `${title}${sep}${status}`;
+  const titleRoom = Math.max(room - status.length, Math.min(title.length, TITLE_FLOOR));
+  const shownTitle = cut(title, titleRoom);
+  return `${shownTitle}${sep}${cut(status, room - shownTitle.length)}`;
 }
 
 /** Answer a listing's `{ data }` in the brief rung. */
