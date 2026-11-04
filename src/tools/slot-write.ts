@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { confirmTokenParam } from '@chrischall/mcp-utils';
 import type { SignUpGeniusClient } from '../client.js';
-import { confirmWrite, textContent } from './_shared.js';
+import { confirmWrite, schoolMeta, textContent } from './_shared.js';
 import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
 import type { Fetcher } from './sug-legacy.js';
 import { timedFetch } from '../http.js';
@@ -306,6 +306,7 @@ export function registerSlotWriteTools(
         'flagged in the preview (identityDiffersFromAccount) — point it out to the user. ' +
         'For Yes/No/Maybe headcount sheets use signupgenius_rsvp instead.',
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      _meta: schoolMeta('change', { aliases: ['sign me up', 'claim a slot', 'volunteer'] }),
       inputSchema: claimSchema,
     },
     async (raw, ctx) => {
@@ -495,6 +496,7 @@ export function registerSlotWriteTools(
         'with the same arguments plus that token withdraws — show the preview to the user ' +
         'and get their approval first (MCP_CONFIRM_MODE).',
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      _meta: schoolMeta('change', { aliases: ['cancel my slot', 'drop out', 'release a slot'] }),
       inputSchema: releaseSchema,
     },
     async (raw, ctx) => {

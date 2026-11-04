@@ -92,6 +92,9 @@ src/
                           #   combined with the MCP request's cancellation. Never call bare fetch().
   tools/
     _shared.ts            # textContent() = minifiedResult from @chrischall/mcp-utils; confirmWrite() (see below)
+                          #   + schoolMeta(): the `_meta.mint` context-group hint every tool but the healthcheck carries
+    brief.ts              # view: 'brief' for the two canonical reads (list_signedupfor = whats-on,
+                          #   list_invited = whats-new): untrusted envelope, `-- none` / `-- error:` notes
     user.ts               # registerUserTools — signupgenius_get_profile
     groups.ts             # registerGroupTools — list_groups, list/get_group_member, add_group_member (write)
     signups.ts            # registerSignUpTools — list_created_{active,expired,all}, list_invited/signedupfor, legacy_get_my_signups

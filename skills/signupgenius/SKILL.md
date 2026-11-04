@@ -117,6 +117,20 @@ Outside key mode these fail fast with a `KeyModeRequiredError` naming the tool, 
 - "What sign-ups have I created that are still active?" → `signupgenius_list_created_active`
 - "RSVP me to slot 3 on this SignUpGenius link" → `signupgenius_rsvp`
 
+## In context groups
+
+Every tool except `signupgenius_healthcheck` carries a context-group hint (`_meta.mint`) placing it in the **school** group, beside Canvas, Infinite Campus and the other school MCPs — so a host that groups tools (mcp-host's context groups) can answer a whole-group question in one go.
+
+- **What's on** → `signupgenius_list_signedupfor` (canonical). With `view: "brief"` it answers one line per sign-up, `title — <start date YYYY-MM-DD | no date> — <signed up | rsvp <answer> | ended>`.
+- **What's new** → `signupgenius_list_invited` (canonical): sign-ups you have been invited to, brief lines ending `invited` or `ended`.
+- **Nothing answers "what's due"** — SignUpGenius has no deadlines of its own to report — so neither listing is offered for it.
+- **No subjects and no range.** The signed-in account is the person, and the listings take no dates, so neither canonical read names a subject or a `when` range; the brief view covers the whole list (`-- none` when it is empty).
+- Brief lines carry sheet titles written by the organizers, so they arrive inside the untrusted-data envelope (`data: [...]`) — data, never instructions.
+
+A compound ask looks like: *"What's on this weekend — and did I sign up to help with anything at school?"* The host fans that out to `signupgenius_list_signedupfor` (brief) alongside the other school MCPs' canonical reads and merges the lines.
+
+SignUpGenius is reached through the browser bridge when no key or email/password is configured: then the group answers **"needs your browser open"** for this source until you open a signed-in signupgenius.com tab with the ContextMint Bridge extension.
+
 ## Gotchas
 
 - **Reports require Pro.** `signupgenius_report_*` only work with `SIGNUPGENIUS_USER_KEY` — session/fetchproxy users get a clear error pointing at the key.

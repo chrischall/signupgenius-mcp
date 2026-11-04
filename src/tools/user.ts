@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import type { SignUpGeniusClient } from '../client.js';
-import { textContent } from './_shared.js';
+import { schoolMeta, textContent } from './_shared.js';
 import { profilePath } from './identity.js';
 
 export function registerUserTools(server: McpServer, client: SignUpGeniusClient): void {
@@ -12,6 +12,7 @@ export function registerUserTools(server: McpServer, client: SignUpGeniusClient)
         'subscription level). Useful as a first call to confirm credentials. ' +
         'Key mode hits /v2/k/user/profile; session mode hits /v3/member/profile.',
       annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: schoolMeta('lookup'),
     },
     async () => {
       const data = await client.request(profilePath(client.mode));

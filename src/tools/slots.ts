@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { textContent } from './_shared.js';
+import { schoolMeta, textContent } from './_shared.js';
 import { parseSignUpUrl } from './public-signup.js';
 import { legacyPost, type Fetcher } from './sug-legacy.js';
 import { timedFetch } from '../http.js';
@@ -334,6 +334,7 @@ export function registerSlotTools(
         'the Pro signupgenius_report_* tools cannot serve (they are key-only AND ' +
         'owner-scoped). This is the right tool for "what is still open?".',
       annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: schoolMeta('lookup', { aliases: ['slots left', 'open slots', 'who is bringing what'] }),
       inputSchema: inputSchema,
     },
     async (rawArgs) => {
