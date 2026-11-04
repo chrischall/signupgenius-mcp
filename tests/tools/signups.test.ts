@@ -111,6 +111,36 @@ describe('view: brief on the canonical reads', () => {
     expect(line).toMatch(/^x+… — 2026-11-08 — (signed up|ended)$/);
   });
 
+  it('cuts the WHOLE line to 120 when an rsvp answer is long, title first', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-04T12:00:00Z'));
+    const out = parse(
+      await brief('signupgenius_list_signedupfor', [
+        { title: 'Fall Festival Volunteers', startdate: '2026-11-08T13:00:00Z', rsvpvalue: 'y'.repeat(300) },
+      ]),
+    );
+    const [line] = out.data as string[];
+    expect(line.length).toBeLessThanOrEqual(120);
+    expect(line).toMatch(/^Fall Festival.* — 2026-11-08 — rsvp y+…$/);
+  });
+
+  it('escapes a title that starts with "-- " or "\\" with one leading backslash', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-04T12:00:00Z'));
+    const out = parse(
+      await brief('signupgenius_list_signedupfor', [
+        { title: '-- none', startdate: '2026-11-08T13:00:00Z' },
+        { title: '\\back', startdate: '2026-11-08T13:00:00Z' },
+        { title: '-- ' + 'z'.repeat(300), startdate: '2026-11-08T13:00:00Z' },
+      ]),
+    );
+    const [a, b, c] = out.data as string[];
+    expect(a).toBe('\\-- none — 2026-11-08 — signed up');
+    expect(b).toBe('\\\\back — 2026-11-08 — signed up');
+    expect(c.startsWith('\\-- z')).toBe(true);
+    expect(c.length).toBeLessThanOrEqual(120);
+  });
+
   it('answers -- none for an empty list', async () => {
     expect(parse(await brief('signupgenius_list_invited', [])).data).toEqual(['-- none']);
   });
