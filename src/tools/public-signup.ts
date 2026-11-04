@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { textContent } from './_shared.js';
+import { schoolMeta, textContent } from './_shared.js';
 import { timedFetch } from '../http.js';
 import {
   legacyPost,
@@ -281,6 +281,7 @@ export function registerPublicSignUpTool(
         'for the actual dates/times and availability — this tool returns ' +
         'metadata only.',
       annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: schoolMeta('lookup', { aliases: ['sign-up sheet', 'signupgenius link'] }),
       inputSchema: inputSchema,
     },
     async (raw) => {

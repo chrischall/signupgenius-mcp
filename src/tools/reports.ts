@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { SignUpGeniusClient } from '../client.js';
-import { textContent } from './_shared.js';
+import { schoolMeta, textContent } from './_shared.js';
 
 const reportArgs = z.object({
   signupId: z.number().int().positive().describe('Sign-up ID (signupid).'),
@@ -31,6 +31,7 @@ export function registerReportTools(server: McpServer, client: SignUpGeniusClien
           'For slot dates, times and availability on ANY sign-up (including sheets the user ' +
           'did not create) prefer signupgenius_list_slots, which needs no auth.',
         annotations: { readOnlyHint: true, openWorldHint: true },
+        _meta: schoolMeta('lookup', { aliases: ['who signed up', 'open slots'] }),
         inputSchema: reportArgs,
       },
       async (raw) => {

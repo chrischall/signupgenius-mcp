@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { confirmTokenParam } from '@chrischall/mcp-utils';
 import type { SignUpGeniusClient } from '../client.js';
-import { confirmWrite, textContent } from './_shared.js';
+import { confirmWrite, schoolMeta, textContent } from './_shared.js';
 import { parseSignUpUrl, type SignUpUrlParts } from './public-signup.js';
 import { readProfile, resolveIdentity } from './identity.js';
 
@@ -307,6 +307,7 @@ export function registerRsvpTool(server: McpServer, client: SignUpGeniusClient):
         'sign-ups (e.g. "claim the 3pm slot") are NOT handled here — use ' +
         'signupgenius_claim_slot for those.',
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      _meta: schoolMeta('send', { aliases: ['rsvp', 'say yes', 'say no'] }),
       inputSchema: inputSchema,
     },
     async (raw, ctx) => {

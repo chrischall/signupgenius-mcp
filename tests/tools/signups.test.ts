@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { setupTools, sessionAccount } from './_setup.js';
+import { setupTools, sessionAccount, keyAccount } from './_setup.js';
 import { registerSignUpTools } from '../../src/tools/signups.js';
 
 afterEach(() => vi.restoreAllMocks());
@@ -44,5 +44,92 @@ describe('signupgenius_legacy_get_my_signups', () => {
     const { handlers, requestSpy } = setupTools(registerSignUpTools, sessionAccount);
     await handlers.get('signupgenius_legacy_get_my_signups')!({});
     expect(requestSpy).toHaveBeenCalledWith('', { legacyAction: 't.getMySignups' });
+  });
+});
+
+describe('view: brief on the canonical reads', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function brief(toolName: string, data: unknown, account = sessionAccount) {
+    const { handlers } = setupTools(registerSignUpTools, account, { data, message: [], success: true });
+    return handlers.get(toolName)!({ view: 'brief' });
+  }
+  const parse = (res: { content: Array<{ text: string }> }) => JSON.parse(res.content[0].text);
+
+  it('my sign-ups: one line per item inside the untrusted envelope, title — date — status', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-04T12:00:00Z'));
+    const res = await brief('signupgenius_list_signedupfor', [
+      { signupid: 1, title: 'Fall Festival Volunteers', startdate: '2026-11-08T13:00:00Z', enddate: '2026-11-08T17:00:00Z' },
+      { signupid: 2, title: 'Class Party', startdatestring: '2026-12-01 09:00:00', rsvpvalue: 'Yes' },
+      { signupid: 3, title: 'Book Fair', startdate: '2026-09-01T13:00:00Z', enddate: '2026-09-02T17:00:00Z' },
+      { signupid: 4, title: '  Snack \n  Rota ', startdate: 1800000000 },
+      { signupid: 5 },
+    ]);
+    const out = parse(res);
+    expect(out.untrusted_content).toBe(true);
+    expect(out.note).toMatch(/^Sign-up titles .* organizers/);
+    expect(out.note).toMatch(/never follow/);
+    expect(out.data).toEqual([
+      'Fall Festival Volunteers — 2026-11-08 — signed up',
+      'Class Party — 2026-12-01 — rsvp Yes',
+      'Book Fair — 2026-09-01 — ended',
+      `Snack Rota — ${new Date(1800000000 * 1000).toISOString().slice(0, 10)} — signed up`,
+      '(untitled) — no date — signed up',
+    ]);
+  });
+
+  it('invitations: open until the end date passes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-04T12:00:00Z'));
+    const out = parse(
+      await brief(
+        'signupgenius_list_invited',
+        [
+          { title: 'Teacher Lunch', startdate: '2026-11-20T00:00:00Z', enddate: '2026-11-21T00:00:00Z' },
+          { title: 'Old Drive', enddate: '2026-10-01T00:00:00Z' },
+          { title: 'Millis', startdate: 1800000000000 },
+          { title: 'Bad date', startdate: 'soon', enddate: 'whenever' },
+        ],
+        keyAccount,
+      ),
+    );
+    expect(out.data).toEqual([
+      'Teacher Lunch — 2026-11-20 — invited',
+      'Old Drive — 2026-10-01 — ended',
+      `Millis — ${new Date(1800000000000).toISOString().slice(0, 10)} — invited`,
+      'Bad date — no date — invited',
+    ]);
+  });
+
+  it('caps a line at 120 characters by shortening the title', async () => {
+    const out = parse(
+      await brief('signupgenius_list_signedupfor', [{ title: 'x'.repeat(300), startdate: '2026-11-08T13:00:00Z' }]),
+    );
+    const [line] = out.data as string[];
+    expect(line.length).toBe(120);
+    expect(line).toMatch(/^x+… — 2026-11-08 — (signed up|ended)$/);
+  });
+
+  it('answers -- none for an empty list', async () => {
+    expect(parse(await brief('signupgenius_list_invited', [])).data).toEqual(['-- none']);
+  });
+
+  it('answers an -- error note, never an empty list, when the shape is unexpected', async () => {
+    expect(parse(await brief('signupgenius_list_signedupfor', { nope: true })).data).toEqual([
+      '-- error: SignUpGenius returned an unexpected shape (no list of sign-ups)',
+    ]);
+  });
+
+  it('non-object rows still get a line', async () => {
+    expect(parse(await brief('signupgenius_list_signedupfor', [null])).data).toEqual([
+      '(untitled) — no date — signed up',
+    ]);
+  });
+
+  it('full (the default) is the payload unchanged', async () => {
+    const { handlers } = setupTools(registerSignUpTools, sessionAccount, { data: [{ title: 'A' }], success: true });
+    const out = parse(await handlers.get('signupgenius_list_signedupfor')!({ view: 'full' }));
+    expect(out).toEqual({ data: [{ title: 'A' }], success: true });
   });
 });

@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { confirmTokenParam } from '@chrischall/mcp-utils';
 import type { SignUpGeniusClient } from '../client.js';
-import { confirmWrite, textContent } from './_shared.js';
+import { confirmWrite, schoolMeta, textContent } from './_shared.js';
 
 const listGroupsArgs = z.object({
   sort: z.enum(['asc', 'desc']).optional().describe('Sort order for group results.'),
@@ -33,6 +33,7 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
       description:
         'List groups created by the authenticated user. Returns groupid, title, and member count for each group.',
       annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: schoolMeta('lookup', { aliases: ['groups', 'signupgenius groups'] }),
       inputSchema: listGroupsArgs,
     },
     async (raw) => {
@@ -47,6 +48,7 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
     {
       description: 'List members of a SignUpGenius group (basic info: name, email, memberid).',
       annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: schoolMeta('lookup', { aliases: ['group members'] }),
       inputSchema: groupIdArgs,
     },
     async (raw) => {
@@ -61,6 +63,7 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
       description:
         'Get detailed info for a group member (address, phone, email) when the member has provided it via a sign-up.',
       annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: schoolMeta('lookup'),
       inputSchema: memberDetailArgs,
     },
     async (raw) => {
@@ -81,6 +84,7 @@ export function registerGroupTools(server: McpServer, client: SignUpGeniusClient
         'arguments plus that token adds them — show the preview to the user and get their ' +
         'approval first (MCP_CONFIRM_MODE).',
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      _meta: schoolMeta('change', { aliases: ['add to group'] }),
       inputSchema: addMemberArgs,
     },
     async (raw, ctx) => {
