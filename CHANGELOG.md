@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/chrischall/signupgenius-mcp/compare/v2.2.0...v2.2.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **deps:** bump @chrischall/mcp-utils from 3.4.0 to 3.4.1 in the production-dependencies group ([#254](https://github.com/chrischall/signupgenius-mcp/issues/254)) ([fe1336b](https://github.com/chrischall/signupgenius-mcp/commit/fe1336bec3b6bde0d256436e51e2377f97416d36))
+
 ## [2.2.0](https://github.com/chrischall/signupgenius-mcp/compare/v2.1.11...v2.2.0) (2026-11-04)
 
 
